@@ -276,11 +276,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
     exception: Prisma.PrismaClientKnownRequestError,
   ): FieldErrorDetail[] {
     const target = exception.meta?.target;
-    const fields = Array.isArray(target)
+    const fields: string[] = Array.isArray(target)
       ? target.filter((item): item is string => typeof item === 'string')
-      : typeof target === 'string'
-        ? [target]
-        : [];
+      : [];
+    if (!Array.isArray(target) && typeof target === 'string') fields.push(target);
     return fields.map((field) => ({
       field,
       message: 'Giá trị này đã được sử dụng.',

@@ -61,7 +61,7 @@ export class IdempotencyService {
           where: { id: claim.id },
           data: {
             state: 'COMPLETED',
-            response: result.data === null ? Prisma.JsonNull : result.data,
+            response: result.data ?? Prisma.JsonNull,
             resourceId: String(result.statusCode),
           },
         });

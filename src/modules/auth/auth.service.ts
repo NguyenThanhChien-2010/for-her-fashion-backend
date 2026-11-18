@@ -21,7 +21,6 @@ import {
   AuthTokens,
   JwtPayload,
   JwtRefreshPayload,
-  toContractId,
   toContractStatus,
 } from './auth.types';
 import { RegisterDto } from './dto/register.dto';
@@ -156,27 +155,31 @@ export class AuthService {
       where: { email },
       select: { id: true, emailVerifiedAt: true, status: true },
     });
-    if (!user || user.emailVerifiedAt || user.status === UserStatus.LOCKED) {
-      return response;
+    // Chỉ tài khoản chưa xác thực và không bị khoá mới thực sự nhận mã mới.
+    if (user && !user.emailVerifiedAt && user.status !== UserStatus.LOCKED) {
+      const rawToken = randomBytes(32).toString('hex');
+      await this.prisma.$transaction(async (tx) => {
+        // Mã cũ bị vô hiệu ngay khi phát mã mới để chỉ tồn tại một mã hiệu lực.
+        await tx.authToken.updateMany({
+          where: {
+            userId: user.id,
+            type: AuthTokenType.VERIFY_EMAIL,
+            usedAt: null,
+            revokedAt: null,
+          },
+          data: { revokedAt: new Date() },
+        });
+        await tx.authToken.create({
+          data: {
+            userId: user.id,
+            type: AuthTokenType.VERIFY_EMAIL,
+            tokenHash: this.hashToken(rawToken),
+            expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
+          },
+        });
+      });
+      this.events.emit('auth.email_verification', { userId: user.id, token: rawToken });
     }
-
-    const rawToken = randomBytes(32).toString('hex');
-    await this.prisma.$transaction(async (tx) => {
-      // Mã cũ bị vô hiệu ngay khi phát mã mới để chỉ tồn tại một mã hiệu lực.
-      await tx.authToken.updateMany({
-        where: { userId: user.id, type: AuthTokenType.VERIFY_EMAIL, usedAt: null, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-      await tx.authToken.create({
-        data: {
-          userId: user.id,
-          type: AuthTokenType.VERIFY_EMAIL,
-          tokenHash: this.hashToken(rawToken),
-          expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
-        },
-      });
-    });
-    this.events.emit('auth.email_verification', { userId: user.id, token: rawToken });
     return response;
   }
 
@@ -293,8 +296,7 @@ export class AuthService {
       include: { user: true },
     });
     if (
-      !stored ||
-      stored.userId !== numericUserId ||
+      stored?.userId !== numericUserId ||
       stored.expiresAt <= new Date() ||
       stored.revokedAt ||
       stored.refreshTokenHash !== this.hashToken(refreshToken)
@@ -405,24 +407,29 @@ export class AuthService {
       where: { email },
       select: { id: true },
     });
-    if (!user) return response;
-
-    const rawToken = randomBytes(32).toString('hex');
-    await this.prisma.$transaction(async (tx) => {
-      await tx.authToken.updateMany({
-        where: { userId: user.id, type: AuthTokenType.RESET_PASSWORD, usedAt: null, revokedAt: null },
-        data: { revokedAt: new Date() },
+    if (user) {
+      const rawToken = randomBytes(32).toString('hex');
+      await this.prisma.$transaction(async (tx) => {
+        await tx.authToken.updateMany({
+          where: {
+            userId: user.id,
+            type: AuthTokenType.RESET_PASSWORD,
+            usedAt: null,
+            revokedAt: null,
+          },
+          data: { revokedAt: new Date() },
+        });
+        await tx.authToken.create({
+          data: {
+            userId: user.id,
+            type: AuthTokenType.RESET_PASSWORD,
+            tokenHash: this.hashToken(rawToken),
+            expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+          },
+        });
       });
-      await tx.authToken.create({
-        data: {
-          userId: user.id,
-          type: AuthTokenType.RESET_PASSWORD,
-          tokenHash: this.hashToken(rawToken),
-          expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
-        },
-      });
-    });
-    this.events.emit('auth.password_reset', { userId: user.id, token: rawToken });
+      this.events.emit('auth.password_reset', { userId: user.id, token: rawToken });
+    }
     return response;
   }
 
@@ -509,7 +516,8 @@ export class AuthService {
   // Ánh xạ entity -> AccountResponse; không bao giờ trả passwordHash hay token.
   toAccount(user: User): AccountResponse {
     return {
-      id: toContractId(user.id),
+      // Contract quy định id là chuỗi số dương; String() tương đương helper cũ.
+      id: String(user.id),
       fullName: user.fullName,
       email: user.email,
       ...(user.phone ? { phone: user.phone } : {}),
@@ -520,7 +528,7 @@ export class AuthService {
     };
   }
 
-  private async findUserByIdentifier(identifier: string): Promise<User | null> {
+  private findUserByIdentifier(identifier: string): Promise<User | null> {
     const value = identifier.trim();
     // Số điện thoại và email có miền giá trị khác nhau nên thử đúng một nhánh cho mỗi request.
     if (value.includes('@')) {
@@ -588,7 +596,7 @@ export class AuthService {
     };
   }
 
-  private async hashPassword(password: string): Promise<string> {
+  private hashPassword(password: string): Promise<string> {
     return argon2.hash(password, {
       type: argon2.argon2id,
       memoryCost: 65536,
@@ -677,7 +685,7 @@ export class AuthService {
   }
 
   private parseUserId(value: string): number | null {
-    if (!/^[1-9][0-9]*$/.test(value)) return null;
+    if (!/^[1-9]\d*$/.test(value)) return null;
     const parsed = Number(value);
     return Number.isSafeInteger(parsed) ? parsed : null;
   }

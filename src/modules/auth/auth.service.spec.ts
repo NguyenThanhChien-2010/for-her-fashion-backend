@@ -445,6 +445,79 @@ describe('AuthService', () => {
     });
   });
 
+  // --- Hồi quy cho OWASP Anti-User Enumeration: response bất biến dù email có tồn tại hay không. ---
+  it('issues a fresh VERIFY_EMAIL token on resend when the account is unverified', async () => {
+    const d = deps();
+    d.prisma.user.findUnique.mockResolvedValue(
+      user({ emailVerifiedAt: null, status: UserStatus.ACTIVE }),
+    );
+    await expect(
+      d.service.resendEmailVerification({ email: 'a@example.com' }),
+    ).resolves.toEqual({
+      status: 'ACCEPTED',
+      message: 'Yêu cầu gửi lại email xác thực đã được ghi nhận.',
+    });
+    // Mã cũ bị thu hồi rồi mới phát mã mới, để chỉ tồn tại một mã hiệu lực.
+    expect(d.tx.authToken.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { revokedAt: expect.any(Date) } }),
+    );
+    expect(d.tx.authToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ type: AuthTokenType.VERIFY_EMAIL, userId: 1 }),
+      }),
+    );
+    expect(d.events.emit).toHaveBeenCalledWith(
+      'auth.email_verification',
+      expect.objectContaining({ userId: 1 }),
+    );
+  });
+
+  it('answers ACCEPTED without writing anything on resend for an unknown email', async () => {
+    const d = deps();
+    d.prisma.user.findUnique.mockResolvedValue(null);
+    await expect(
+      d.service.resendEmailVerification({ email: 'ghost@example.com' }),
+    ).resolves.toEqual({
+      status: 'ACCEPTED',
+      message: 'Yêu cầu gửi lại email xác thực đã được ghi nhận.',
+    });
+    expect(d.tx.authToken.create).not.toHaveBeenCalled();
+    expect(d.events.emit).not.toHaveBeenCalled();
+  });
+
+  it('answers ACCEPTED but skips token issuance on resend for a LOCKED account', async () => {
+    const d = deps();
+    d.prisma.user.findUnique.mockResolvedValue(
+      user({ emailVerifiedAt: null, status: UserStatus.LOCKED }),
+    );
+    await expect(
+      d.service.resendEmailVerification({ email: 'a@example.com' }),
+    ).resolves.toEqual({
+      status: 'ACCEPTED',
+      message: 'Yêu cầu gửi lại email xác thực đã được ghi nhận.',
+    });
+    // Tài khoản bị khoá không được kích hoạt lại qua luồng gửi lại email.
+    expect(d.tx.authToken.create).not.toHaveBeenCalled();
+  });
+
+  it('issues a RESET_PASSWORD token on forgot-password for a known email', async () => {
+    const d = deps();
+    d.prisma.user.findUnique.mockResolvedValue(user());
+    await expect(d.service.forgotPassword({ email: 'a@example.com' })).resolves.toEqual({
+      status: 'ACCEPTED',
+      message: 'Yêu cầu đã được ghi nhận.',
+    });
+    expect(d.tx.authToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ type: AuthTokenType.RESET_PASSWORD, userId: 1 }),
+      }),
+    );
+    expect(d.events.emit).toHaveBeenCalledWith(
+      'auth.password_reset',
+      expect.objectContaining({ userId: 1 }),
+    );
+  });
+
   it('maps LOCKED status and missing emailVerifiedAt into the contract Account', () => {
     const d = deps();
     expect(d.service.toAccount(user({ status: UserStatus.LOCKED })).status).toBe('LOCKED');

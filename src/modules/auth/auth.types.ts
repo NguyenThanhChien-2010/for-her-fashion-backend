@@ -81,14 +81,11 @@ export function toDatabaseStatus(status: AccountStatus): UserStatus {
 // Prisma model User kèm quan hệ cần cho AccountResponse.
 export type UserWithRelations = Prisma.UserGetPayload<{ include: Record<string, never> }>;
 
-// Chuyển id Int sang chuỗi số đúng contract (^[1-9][0-9]*$).
-export function toContractId(id: number): string {
-  return String(id);
-}
+// Id Int trả về dạng chuỗi số đúng contract (^[1-9]\d*$): dùng String(id) trực tiếp tại call site.
 
 // Chuyển id từ chuỗi contract sang Int cho truy vấn Prisma; ném lỗi nếu không phải số dương.
 export function parseContractId(value: string): number | null {
-  if (!/^[1-9][0-9]*$/.test(value)) return null;
+  if (!/^[1-9]\d*$/.test(value)) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
 }

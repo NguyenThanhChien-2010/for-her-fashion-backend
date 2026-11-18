@@ -85,10 +85,10 @@ export class InternalAccountCreateDto {
   @MaxLength(254)
   email!: string;
 
-  @ApiPropertyOptional({ example: '0901234567', pattern: '^\\+?[0-9]{9,15}$' })
+  @ApiPropertyOptional({ example: '0901234567', pattern: String.raw`^\+?[0-9]{9,15}$` })
   @IsOptional()
   @IsString()
-  @Matches(/^\+?[0-9]{9,15}$(?![\s\S])/, { message: 'Số điện thoại không đúng định dạng.' })
+  @Matches(/^\+?\d{9,15}$(?![\s\S])/, { message: 'Số điện thoại không đúng định dạng.' })
   phone?: string;
 
   @StrongPassword()

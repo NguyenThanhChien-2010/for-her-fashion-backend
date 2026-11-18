@@ -82,7 +82,7 @@ export class AdminAccountsController {
   @ApiSuccessResponse(200, AccountDto)
   @ApiErrorResponses(400, 401, 403, 404, 429, 500)
   findOne(@Param('accountId') accountId: string, @CurrentUser() user: AuthenticatedUser) {
-    if (!/^[1-9][0-9]*$/.test(accountId)) {
+    if (!/^[1-9]\d*$/.test(accountId)) {
       throw new BadRequestException('ID tài khoản không đúng định dạng.');
     }
     return this.adminAccounts.findOne(accountId, { id: String(user.id), role: user.role });

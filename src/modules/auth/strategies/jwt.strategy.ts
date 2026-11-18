@@ -42,7 +42,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     if (
       claims.type !== 'access' ||
       typeof claims.sub !== 'string' ||
-      !/^[1-9][0-9]*$/.test(claims.sub) ||
+      !/^[1-9]\d*$/.test(claims.sub) ||
       typeof claims.email !== 'string' ||
       !claims.email.trim() ||
       !Object.values(UserRole).includes(claims.role as UserRole)

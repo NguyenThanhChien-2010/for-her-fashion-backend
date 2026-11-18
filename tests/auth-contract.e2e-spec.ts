@@ -14,6 +14,9 @@ import { validationExceptionFactory } from '../src/common/errors/api-error';
 // E2E cho toàn bộ bề mặt M01 + Shared của API Contract v1.0.2 trên schema Leader (Int id).
 const ACCESS_SECRET = 'test-access-secret-with-at-least-32-chars';
 const REFRESH_SECRET = 'test-refresh-secret-with-at-least-32-chars';
+// Fixture E2E: credential giả lập, không phải bí mật thật và không dùng ở production.
+const SAMPLE_LOGIN_CREDENTIAL = 'MatKhauMinhHoa!2026';
+const SAMPLE_INTERNAL_CREDENTIAL = 'MatKhauNoiBo!2026';
 
 function userRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -77,13 +80,15 @@ describe('M01 + Shared HTTP contract', () => {
       onModuleInit: jest.fn(),
       onModuleDestroy: jest.fn(),
       user: {
-        findUnique: jest.fn(async (args: { where?: { id?: number; email?: string; phone?: string } }) => byId(args)),
-        findFirst: jest.fn(async () => currentUser),
-        findMany: jest.fn(async () => [currentUser]),
+        findUnique: jest.fn((args: { where?: { id?: number; email?: string; phone?: string } }) =>
+          Promise.resolve(byId(args)),
+        ),
+        findFirst: jest.fn(() => Promise.resolve(currentUser)),
+        findMany: jest.fn(() => Promise.resolve([currentUser])),
         count: jest.fn().mockResolvedValue(1),
         create: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-        findUniqueOrThrow: jest.fn(async () => targetUser),
+        findUniqueOrThrow: jest.fn(() => Promise.resolve(targetUser)),
       },
       authSession: {
         findUnique: jest.fn().mockResolvedValue(null),
@@ -165,11 +170,11 @@ describe('M01 + Shared HTTP contract', () => {
     );
 
   it('POST /auth/login returns AuthTokens { accessToken, refreshToken, tokenType, expiresIn, account }', async () => {
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(SAMPLE_LOGIN_CREDENTIAL, { type: argon2.argon2id });
     currentUser = userRow({ passwordHash: hash });
     const result = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
-      .send({ identifier: 'khach@example.com', password: 'MatKhauMinhHoa!2026', rememberMe: true })
+      .send({ identifier: 'khach@example.com', password: SAMPLE_LOGIN_CREDENTIAL, rememberMe: true })
       .expect(200);
 
     expect(result.body.traceId).toEqual(expect.any(String));
@@ -194,11 +199,11 @@ describe('M01 + Shared HTTP contract', () => {
   });
 
   it('POST /admin/auth/login rejects a CUSTOMER account with 403 FORBIDDEN', async () => {
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(SAMPLE_LOGIN_CREDENTIAL, { type: argon2.argon2id });
     currentUser = userRow({ passwordHash: hash, role: UserRole.CUSTOMER });
     const result = await request(app.getHttpServer())
       .post('/api/v1/admin/auth/login')
-      .send({ identifier: 'khach@example.com', password: 'MatKhauMinhHoa!2026' })
+      .send({ identifier: 'khach@example.com', password: SAMPLE_LOGIN_CREDENTIAL })
       .expect(403);
     expect(result.body.error.code).toBe('FORBIDDEN');
   });
@@ -259,14 +264,16 @@ describe('M01 + Shared HTTP contract', () => {
     currentUser = userRow({ role: UserRole.ADMIN });
     targetUser = userRow({ id: 2, email: 'target@example.com', role: UserRole.STAFF, version: 3 });
     // Response trả bản ghi sau khi ghi: đã LOCKED và version tăng lên 4.
-    prisma.user.findUniqueOrThrow.mockImplementation(async () =>
-      userRow({
-        id: 2,
-        email: 'target@example.com',
-        role: UserRole.STAFF,
-        status: UserStatus.LOCKED,
-        version: 4,
-      }),
+    prisma.user.findUniqueOrThrow.mockImplementation(() =>
+      Promise.resolve(
+        userRow({
+          id: 2,
+          email: 'target@example.com',
+          role: UserRole.STAFF,
+          status: UserStatus.LOCKED,
+          version: 4,
+        }),
+      ),
     );
     const token = accessToken({ role: UserRole.ADMIN });
     const result = await request(app.getHttpServer())
@@ -307,7 +314,7 @@ describe('M01 + Shared HTTP contract', () => {
       .send({
         fullName: 'Nhân viên mới',
         email: 'new@example.com',
-        password: 'MatKhauNoiBo!2026',
+        password: SAMPLE_INTERNAL_CREDENTIAL,
         role: 'STAFF',
       })
       .expect(400);
@@ -336,7 +343,7 @@ describe('M01 + Shared HTTP contract', () => {
       .send({
         fullName: 'Nhân viên mới',
         email: 'new@example.com',
-        password: 'MatKhauNoiBo!2026',
+        password: SAMPLE_INTERNAL_CREDENTIAL,
         role: 'STAFF',
       })
       .expect(201);
