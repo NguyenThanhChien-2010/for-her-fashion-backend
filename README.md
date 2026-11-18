@@ -1,30 +1,45 @@
 # For Her Fashion Backend
 
-Repository nền tảng dành cho team Backend trong dự án cải thiện website For Her Fashion.
+Backend khởi tạo với NestJS và TypeScript theo hướng Modular Monolith. Prisma dùng MySQL; JWT là nền tảng cho xác thực, Swagger cung cấp tài liệu API, Docker Compose chạy môi trường phát triển local.
 
-## Mục tiêu
+## Yêu cầu
 
-- Cung cấp cấu trúc thống nhất để team bắt đầu phát triển Backend.
-- Lưu trữ mã nguồn, tài liệu và kiểm thử theo từng khu vực riêng.
-- Làm nền tảng để bổ sung công nghệ và quy ước dự án trong các giai đoạn sau.
+- Node.js 24 và npm (phiên bản cụ thể được khóa trong `package-lock.json`).
+- Docker Desktop hoặc Docker Engine với Compose.
 
-## Cấu trúc
-```css
-for-her-fashion-backend/
-├── src/             # Source code Backend
-├── docs/            # Tài liệu dự án
-├── tests/           # Thư mục kiểm thử
-├── .gitignore       # Các tệp và thư mục Git bỏ qua
-├── README.md        # Giới thiệu và hướng dẫn repository
-└── CONTRIBUTING.md  # Quy ước đóng góp
+## Chạy local
 
+```bash
+Copy-Item .env.example .env # PowerShell; dùng `cp .env.example .env` trên macOS/Linux
+docker compose up -d mysql
+npm ci
+npm run prisma:validate
+npm run prisma:generate
+npm run prisma:migrate:deploy
+npm run start:dev
 ```
 
-## Bắt đầu
+API chạy tại `http://localhost:3000/api`, health check tại `/api/health` và Swagger tại `/docs`. `.env.example` chứa giá trị minh họa; chỉnh `DATABASE_URL` để dùng database phát triển local và thay `JWT_SECRET` bằng secret ngẫu nhiên. `.env` bị Git bỏ qua. Docker Compose khởi tạo MySQL local với database `for_her_fashion_dev`; không dùng các thông tin này cho production.
 
-1. Clone repository và tạo branch theo quy ước trong [CONTRIBUTING.md](https://github.com/NguyenThanhChien-2010/for-her-fashion-backend/blob/main/CONTRIBUTING.md).
-2. Đặt mã nguồn Backend trong `src/`, tài liệu trong `docs/` và kiểm thử trong `tests/`.
-3. Khi công nghệ và lệnh chạy dự án được thống nhất, cập nhật hướng dẫn tương ứng tại đây.
-4. Gửi Pull Request theo quy trình đóng góp để team xem xét.
+Để tạo migration mới khi thay đổi Prisma schema, dùng `npm run prisma:migrate:dev -- --name <ten-migration>` sau khi database local chạy.
 
-Chưa có lệnh cài đặt hoặc chạy ứng dụng ở giai đoạn khởi tạo này.
+## Kiểm tra local
+
+```bash
+npm ci
+npm run prisma:validate
+npm run prisma:generate
+npm run lint -- --no-fix
+npm run build
+npm test -- --runInBand
+```
+
+Các test hiện tại kiểm tra health endpoint bằng ứng dụng kiểm thử riêng, không gọi MoMo, KiotViet hoặc email. Khi thêm tích hợp, viết test với mock và không đưa credentials bên ngoài vào CI.
+
+## GitHub Actions CI
+
+Workflow `.github/workflows/ci.yml` chạy khi tạo/cập nhật Pull Request vào `main` và khi push vào `main`. Job readiness truyền output `has_application` sang job ứng dụng. Nếu không có `package.json`, workflow báo ứng dụng chưa khởi tạo và bỏ qua các bước ứng dụng.
+
+Khi ứng dụng có cấu hình, CI dùng Node.js 24 và `npm ci` theo lockfile, validate/generate Prisma, áp dụng migration đã commit, lint chỉ kiểm tra (`--no-fix`), build và chạy test. CI khởi động MySQL 8 tạm với database `for_her_fashion_test`, tài khoản `ci`/`ci` và cổng 3306. `DATABASE_URL` trong CI trỏ đúng tới service này; CI không đọc `.env` local. JWT secret CI là giá trị test riêng, không phải secret production.
+
+Trong GitHub, mở **Checks** của PR hoặc commit rồi xem **Details** của từng job để đọc log. `Repository readiness` thành công khi không có `package.json` chỉ xác nhận workflow phát hiện repo; job ứng dụng bị bỏ qua nên chưa có kết quả build/test. Chỉ lần chạy có job `Application checks` hoàn tất mới xác nhận các bước ứng dụng đã chạy.
