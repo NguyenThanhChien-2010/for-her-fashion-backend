@@ -1,3 +1,10 @@
+// For Her Fashion - Task 1-4. Prisma 6.x, MySQL 8.x.
+// Cần migration và đối chiếu dữ liệu cũ trước triển khai.
+// Ràng buộc quyền, chuyển trạng thái và số lượng kiểm tra tại service trong giao dịch.
+// Ghi chú đơn kiểm thử: Đơn Test - HKDN | Nhờ các chị không chuyển thành hóa đơn ạ.
+// Database schema - website bán hàng thời trang
+// NestJS + Prisma + MySQL (modular monolith: M01-M14 + P)
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,18 +14,1444 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// - Enums -
+
 enum UserRole {
   CUSTOMER
+  STAFF
   ADMIN
 }
 
-model User {
-  id           String   @id @default(cuid())
-  email        String   @unique @db.VarChar(191)
-  passwordHash String   @map("password_hash") @db.VarChar(255)
-  role         UserRole @default(CUSTOMER)
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+enum UserStatus {
+  ACTIVE
+  LOCKED
+}
 
+enum AuthTokenType {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  HIDDEN
+}
+
+enum InventoryReason {
+  ORDER_CREATED
+  ORDER_CANCELLED
+  PAYMENT_EXPIRED
+  RETURN_RECEIVED
+  ADMIN_ADJUST
+}
+
+enum DiscountType {
+  PERCENT
+  FIXED
+}
+
+enum PaymentMethod {
+  COD
+  MOMO
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  NEEDS_RECONCILIATION
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  UNKNOWN
+}
+
+enum StatusSource {
+  CUSTOMER
+  ADMIN
+  KIOTVIET
+  SYSTEM
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum SyncType {
+  PUSH_ORDER
+  SYNC_STATUS
+  SYNC_INVENTORY
+  SYNC_PAYMENT
+  SYNC_RETURN
+  SYNC_CUSTOMER
+  SYNC_INVOICE
+}
+
+enum SyncDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum LoyaltyEntryType {
+  EARN
+  REVERSE
+  ADJUST
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  HIDDEN
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  RECEIVED
+  COMPLETED
+  CANCELLED
+}
+
+enum TailoringStatus {
+  NEW
+  CONTACTED
+  QUOTED
+  DONE
+  CANCELLED
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+}
+
+enum ReconciliationStatus {
+  MATCHED
+  MISMATCHED
+}
+
+// - M01 Tài khoản và phân quyền -
+
+model User {
+  version          Int               @default(1)
+  sessions         AuthSession[]
+  checkoutContexts CheckoutContext[]
+  // Chờ xác thực được xác định bằng emailVerifiedAt, độc lập trạng thái khóa.
+
+  id              Int        @id @default(autoincrement())
+  email           String     @unique @db.VarChar(191)
+  passwordHash    String     @db.VarChar(255)
+  fullName        String     @db.VarChar(150)
+  phone           String?    @unique @db.VarChar(20) // chuẩn hóa trước kiểm tra trùng
+  role            UserRole   @default(CUSTOMER)
+  status          UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?
+  lockedReason    String?    @db.VarChar(255)
+  createdBy       Int? // Admin tạo tài khoản nội bộ (FR-ADM-06.4)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  authTokens        AuthToken[]
+  cart              Cart?
+  buyNowSessions    BuyNowSession[]
+  wishlistItems     WishlistItem[]
+  orders            Order[]
+  memberProfile     MemberProfile?
+  loyaltyEntries    LoyaltyEntry[]
+  reviews           Review[]
+  returnRequests    ReturnRequest[]
+  tailoringRequests TailoringRequest[]
+
+  @@index([role, status])
   @@map("users")
+}
+
+model AuthToken {
+  revokedAt DateTime?
+
+  id        Int           @id @default(autoincrement())
+  userId    Int
+  type      AuthTokenType
+  tokenHash String        @unique @db.VarChar(128)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@map("auth_tokens")
+}
+
+// - M02 Danh mục và sản phẩm -
+
+model Category {
+  sizeChartId         Int?
+  sizeChartDefinition SizeChart? @relation("CategorySizeChart", fields: [sizeChartId], references: [id])
+
+  version Int @default(1)
+
+  id        Int     @id @default(autoincrement())
+  parentId  Int?
+  name      String  @db.VarChar(150)
+  slug      String  @unique @db.VarChar(191)
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+
+  @@index([parentId])
+  @@map("categories")
+}
+
+model ColorGroup {
+  id     Int     @id @default(autoincrement())
+  name   String  @unique @db.VarChar(60)
+  colors Color[]
+
+  @@map("color_groups")
+}
+
+model Color {
+  version Int @default(1)
+
+  id        Int     @id @default(autoincrement())
+  groupId   Int
+  name      String  @unique @db.VarChar(60)
+  hex       String? @db.VarChar(7)
+  skuSuffix String  @unique @db.VarChar(10)
+
+  group    ColorGroup       @relation(fields: [groupId], references: [id])
+  variants ProductVariant[]
+  images   ProductImage[]
+
+  @@index([groupId])
+  @@map("colors")
+}
+
+model Product {
+  sizeChartId         Int?
+  sizeChartDefinition SizeChart? @relation("ProductSizeChart", fields: [sizeChartId], references: [id])
+
+  version Int @default(1)
+
+  id          Int           @id @default(autoincrement())
+  categoryId  Int
+  name        String        @db.VarChar(255)
+  slug        String        @unique @db.VarChar(255)
+  baseCode    String        @unique @db.VarChar(40) // SKU = baseCode + hậu tố màu + hậu tố size
+  description String?       @db.Text
+  price       Decimal       @db.Decimal(12, 0)
+  status      ProductStatus @default(DRAFT)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  category    Category            @relation(fields: [categoryId], references: [id])
+  variants    ProductVariant[]
+  images      ProductImage[]
+  wishlist    WishlistItem[]
+  reviews     Review[]
+  ratingStats ProductRatingStats?
+
+  @@index([categoryId, status])
+  @@map("products")
+}
+
+model ProductVariant {
+  size              Size                     @relation(fields: [sizeCode], references: [code])
+  kiotvietVariantId String?                  @unique @db.VarChar(64)
+  pendingEffects    PendingInventoryEffect[]
+  adjustments       InventoryAdjustment[]
+
+  version Int @default(1)
+
+  id        Int      @id @default(autoincrement())
+  productId Int
+  colorId   Int
+  sizeCode  String   @db.VarChar(10)
+  sku       String   @unique @db.VarChar(80)
+  price     Decimal? @db.Decimal(12, 0) // null = dùng giá sản phẩm
+  isActive  Boolean  @default(true)
+
+  product    Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  color      Color               @relation(fields: [colorId], references: [id])
+  inventory  Inventory?
+  movements  InventoryMovement[]
+  cartItems  CartItem[]
+  buyNow     BuyNowSession[]
+  orderItems OrderItem[]
+
+  @@unique([productId, colorId, sizeCode])
+  @@map("product_variants")
+}
+
+model ProductImage {
+  id        Int  @id @default(autoincrement())
+  productId Int
+  colorId   Int?
+  fileId    Int
+  sortOrder Int  @default(0)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  color   Color?  @relation(fields: [colorId], references: [id])
+  file    File    @relation(fields: [fileId], references: [id])
+
+  @@index([productId, sortOrder])
+  @@map("product_images")
+}
+
+model SizeChartRow {
+  id           Int    @id @default(autoincrement())
+  chartId      Int
+  sizeCode     String @db.VarChar(10)
+  measurements Json // ví dụ { "ngực": 88, "eo": 70, "dài": 60 } (cm)
+
+  chart SizeChart @relation(fields: [chartId], references: [id], onDelete: Cascade)
+  size  Size      @relation(fields: [sizeCode], references: [code])
+
+  @@unique([chartId, sizeCode])
+  @@map("size_chart_rows")
+}
+
+// - M03 Tồn kho theo SKU -
+
+model Inventory {
+  version         Int       @default(1)
+  sourceQuantity  Int? // null = nguồn chưa được xác nhận
+  lastConfirmedAt DateTime?
+  sourceVersion   String?   @db.VarChar(100)
+  syncStatus      SyncState @default(PENDING)
+  // quantity là tồn bán web, gồm ảnh hưởng của các pendingEffects chưa được nguồn ghi nhận.
+
+  variantId Int      @id
+  quantity  Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@map("inventories")
+}
+
+model InventoryMovement {
+  operationKey     String  @unique @db.VarChar(191)
+  sourceDocumentId String? @db.VarChar(100)
+  inventoryVersion Int
+
+  id        Int             @id @default(autoincrement())
+  variantId Int
+  delta     Int // âm = trừ tồn, dương = cộng/hoàn tồn
+  reason    InventoryReason
+  refType   String?         @db.VarChar(30) // order | return | adjust
+  refId     Int?
+  note      String?         @db.VarChar(255)
+  createdBy Int?
+  createdAt DateTime        @default(now())
+
+  variant ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([variantId, createdAt])
+  @@index([refType, refId])
+  @@map("inventory_movements")
+}
+
+// - M04 Giỏ hàng và yêu thích -
+
+model Cart {
+  version Int @default(1)
+
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique
+  updatedAt DateTime @updatedAt
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  version Int @default(1)
+
+  id        Int     @id @default(autoincrement())
+  cartId    Int
+  variantId Int
+  quantity  Int
+  selected  Boolean @default(true)
+
+  cart    Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([cartId, variantId])
+  @@map("cart_items")
+}
+
+// "Mua ngay" dùng phiên mua riêng, không đổi giỏ hiện có
+model BuyNowSession {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  variantId Int
+  quantity  Int
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([userId])
+  @@map("buy_now_sessions")
+}
+
+model WishlistItem {
+  userId    Int
+  productId Int
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([userId, productId])
+  @@map("wishlist_items")
+}
+
+// - M05 Mã ưu đãi -
+
+model Voucher {
+  version Int @default(1)
+
+  id             Int          @id @default(autoincrement())
+  code           String       @unique @db.VarChar(40)
+  discountType   DiscountType
+  discountValue  Decimal      @db.Decimal(12, 2)
+  maxDiscount    Decimal?     @db.Decimal(12, 0) // mức giảm tối đa
+  minOrderAmount Decimal      @default(0) @db.Decimal(12, 0)
+  startsAt       DateTime
+  endsAt         DateTime
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  orders Order[]
+
+  @@map("vouchers")
+}
+
+// - M06 Đơn hàng -
+
+model Order {
+  sourceInvoices SourceInvoice[]
+
+  version                 Int                     @default(1)
+  deliveryStatus          DeliveryStatus          @default(NOT_SHIPPED)
+  paymentExpiresAt        DateTime? // hạn gốc 15 phút từ tạo đơn MoMo, thử lại không gia hạn
+  deliveredAt             DateTime?
+  deliveryUnsuccessfulAt  DateTime?
+  promotionType           PromotionType           @default(NONE)
+  promotionPercent        Decimal?                @db.Decimal(5, 2)
+  membershipTierName      String?                 @db.VarChar(60)
+  membershipPolicyVersion Int?
+  paymentSummary          PaymentSummary?
+  refundObligations       Refund[]
+  birthdayUsage           BirthdayUsage?
+  deliveryReceipts        DeliveryReturnReceipt[]
+  checkoutQuoteId         Int?                    @unique
+  checkoutQuote           CheckoutQuote?          @relation(fields: [checkoutQuoteId], references: [id])
+
+  pendingEffects PendingInventoryEffect[]
+
+  id             Int           @id @default(autoincrement())
+  code           String        @unique @db.VarChar(30)
+  userId         Int
+  status         String        @db.VarChar(40) // trạng thái đơn (máy trạng thái ở M06), xem bảng trạng thái
+  paymentMethod  PaymentMethod
+  paymentStatus  PaymentStatus @default(UNPAID) // tách riêng với trạng thái đơn
+  subtotal       Decimal       @db.Decimal(12, 0)
+  shippingFee    Decimal       @default(30000) @db.Decimal(12, 0)
+  discountAmount Decimal       @default(0) @db.Decimal(12, 0)
+  total          Decimal       @db.Decimal(12, 0)
+  voucherId      Int?
+  voucherCode    String?       @db.VarChar(40)
+  shipName       String        @db.VarChar(150)
+  shipPhone      String        @db.VarChar(20)
+  shipEmail      String        @db.VarChar(191) // email nhận xác nhận đơn (M13)
+  shipAddress    String        @db.VarChar(255)
+  shipWard       String?       @db.VarChar(100)
+  shipDistrict   String?       @db.VarChar(100)
+  shipProvince   String        @db.VarChar(100)
+  shipPostalCode String?       @db.VarChar(10) // mã bưu điện
+  note           String?       @db.VarChar(500)
+  cancelReason   String?       @db.VarChar(255)
+  idempotencyKey String?       @db.VarChar(128) // tạo đơn đúng một lần
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  user           User                 @relation(fields: [userId], references: [id])
+  voucher        Voucher?             @relation(fields: [voucherId], references: [id])
+  items          OrderItem[]
+  statusHistory  OrderStatusHistory[]
+  payments       Payment[]
+  kiotvietLink   KiotvietOrderLink?
+  syncOutbox     SyncOutbox[]
+  syncLogs       SyncLog[]
+  loyaltyEntries LoyaltyEntry[]
+  returnRequests ReturnRequest[]
+
+  // Giao nhận, thanh toán và đổi trả độc lập. Đổi trả giữ trạng thái DELIVERED.
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([paymentMethod, paymentStatus])
+  @@map("orders")
+}
+
+model OrderItem {
+  discountAmount      Decimal              @default(0) @db.Decimal(12, 0)
+  netAmount           Decimal              @db.Decimal(12, 0)
+  // lineTotal = unitPrice * quantity; netAmount = lineTotal - discountAmount.
+  deliveryReturnItems DeliveryReturnItem[]
+
+  id          Int     @id @default(autoincrement())
+  orderId     Int
+  variantId   Int
+  productName String  @db.VarChar(255) // snapshot tại thời điểm mua
+  sku         String  @db.VarChar(80)
+  colorName   String  @db.VarChar(60)
+  sizeCode    String  @db.VarChar(10)
+  unitPrice   Decimal @db.Decimal(12, 0)
+  quantity    Int
+  lineTotal   Decimal @db.Decimal(12, 0)
+
+  order       Order               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  variant     ProductVariant      @relation(fields: [variantId], references: [id])
+  review      Review?
+  returnItems ReturnRequestItem[]
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model OrderStatusHistory {
+  id         Int          @id @default(autoincrement())
+  orderId    Int
+  fromStatus String?      @db.VarChar(40)
+  toStatus   String       @db.VarChar(40)
+  source     StatusSource
+  actorId    Int?
+  note       String?      @db.VarChar(255)
+  createdAt  DateTime     @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, createdAt])
+  @@map("order_status_history")
+}
+
+// - M07 Thanh toán -
+
+model Payment {
+  refundedAmount       Decimal @default(0) @db.Decimal(12, 0)
+  reservedRefundAmount Decimal @default(0) @db.Decimal(12, 0)
+
+  provider               String                      @db.VarChar(30)
+  providerTransactionKey String?                     @unique @db.VarChar(191)
+  verifiedAt             DateTime?
+  version                Int                         @default(1)
+  refunds                Refund[]
+  reconciliations        PaymentReconciliationCase[]
+  // Mỗi dòng là một lần thử/khoản thu thực tế. Timeout = UNKNOWN, cần tra cứu.
+
+  id            Int               @id @default(autoincrement())
+  orderId       Int
+  method        PaymentMethod
+  status        TransactionStatus @default(PENDING)
+  amount        Decimal           @db.Decimal(12, 0)
+  momoOrderId   String?           @unique @db.VarChar(64)
+  momoRequestId String?           @db.VarChar(64)
+  momoTransId   String?           @db.VarChar(64)
+  payUrl        String?           @db.VarChar(500)
+  expiresAt     DateTime? // sao chép Order.paymentExpiresAt, thử lại không gia hạn
+  paidAt        DateTime?
+  rawResponse   Json?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([status, expiresAt])
+  @@map("payments")
+}
+
+model PaymentReconciliation {
+  id            Int                  @id @default(autoincrement())
+  reconDate     DateTime             @unique @db.Date
+  expectedCount Int
+  expectedTotal Decimal              @db.Decimal(14, 0)
+  actualCount   Int
+  actualTotal   Decimal              @db.Decimal(14, 0)
+  status        ReconciliationStatus
+  detail        Json?
+  createdAt     DateTime             @default(now())
+
+  @@map("payment_reconciliations")
+}
+
+// - M08 Tích hợp KiotViet -
+
+model KiotvietOrderLink {
+  orderId         Int       @id
+  kiotvietOrderId String?   @unique @db.VarChar(64)
+  kiotvietCode    String?   @db.VarChar(64)
+  lastKvStatus    String?   @db.VarChar(40)
+  lastSyncedAt    DateTime?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@map("kiotviet_order_links")
+}
+
+model KiotvietStatusMapping {
+  id             Int     @id @default(autoincrement())
+  kiotvietStatus String  @unique @db.VarChar(40)
+  orderStatus    String  @db.VarChar(40) // trạng thái đơn nội bộ tương ứng
+  isActive       Boolean @default(true)
+
+  @@map("kiotviet_status_mappings")
+}
+
+model SyncOutbox {
+  id             Int          @id @default(autoincrement())
+  orderId        Int
+  type           SyncType
+  payload        Json
+  status         OutboxStatus @default(PENDING)
+  attempts       Int          @default(0)
+  nextRetryAt    DateTime?
+  lastError      String?      @db.VarChar(500)
+  idempotencyKey String       @unique @db.VarChar(100) // đẩy đơn một lần
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([status, nextRetryAt])
+  @@map("sync_outbox")
+}
+
+model SyncLog {
+  id         Int           @id @default(autoincrement())
+  orderId    Int?
+  direction  SyncDirection
+  endpoint   String?       @db.VarChar(150)
+  request    Json?
+  response   Json?
+  httpStatus Int?
+  success    Boolean
+  createdAt  DateTime      @default(now())
+
+  order Order? @relation(fields: [orderId], references: [id])
+
+  @@index([orderId, createdAt])
+  @@map("sync_logs")
+}
+
+// - M09 Doanh số và hạng thành viên -
+
+model MembershipTier {
+  regularDiscountPercent  Decimal         @db.Decimal(5, 2)
+  birthdayDiscountPercent Decimal         @db.Decimal(5, 2)
+  accumulatedMembers      MemberProfile[] @relation("AccumulatedTier")
+
+  id        Int     @id @default(autoincrement())
+  name      String  @unique @db.VarChar(60)
+  minSpent  Decimal @db.Decimal(14, 0) // mốc 10 / 20 / 30 triệu
+  sortOrder Int     @default(0)
+
+  members MemberProfile[]
+
+  @@map("membership_tiers")
+}
+
+model MemberProfile {
+  loyaltyEntries LoyaltyEntry[]
+  sourceInvoices SourceInvoice[]
+
+  id                    Int             @id @default(autoincrement())
+  verifiedPhone         String?         @unique @db.VarChar(20)
+  sourceCustomerId      String?         @unique @db.VarChar(100)
+  dateOfBirth           DateTime?       @db.Date
+  dateOfBirthVerifiedAt DateTime?
+  sourceSyncStatus      SyncState       @default(PENDING)
+  sourceLastSyncedAt    DateTime?
+  accumulatedTierId     Int?
+  accumulatedTier       MembershipTier? @relation("AccumulatedTier", fields: [accumulatedTierId], references: [id])
+  version               Int             @default(1)
+  birthdayUsages        BirthdayUsage[]
+  // points giữ lịch sử. Không đặt tỷ lệ tiền đổi điểm, không hạ hạng vì không giao dịch.
+
+  userId     Int?     @unique
+  tierId     Int?
+  totalSpent Decimal  @default(0) @db.Decimal(14, 0)
+  points     Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
+  user User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  tier MembershipTier? @relation(fields: [tierId], references: [id])
+
+  @@map("member_profiles")
+}
+
+model LoyaltyEntry {
+  memberProfileId Int
+  memberProfile   MemberProfile @relation(fields: [memberProfileId], references: [id])
+
+  sourceSystem    String         @db.VarChar(30)
+  sourceEventKey  String         @db.VarChar(191)
+  sourceInvoiceId String?        @db.VarChar(100)
+  sourceChannel   String         @db.VarChar(30)
+  occurredAt      DateTime
+  returnReceiptId Int?
+  returnReceipt   ReturnReceipt? @relation(fields: [returnReceiptId], references: [id])
+  tierBefore      String?        @db.VarChar(60)
+  tierAfter       String?        @db.VarChar(60)
+
+  id            Int              @id @default(autoincrement())
+  userId        Int?
+  orderId       Int?
+  type          LoyaltyEntryType
+  spentDelta    Decimal          @db.Decimal(14, 0)
+  pointsDelta   Int
+  balanceSpent  Decimal          @db.Decimal(14, 0)
+  balancePoints Int
+  createdAt     DateTime         @default(now())
+
+  user  User?  @relation(fields: [userId], references: [id])
+  order Order? @relation(fields: [orderId], references: [id])
+
+  @@unique([sourceSystem, sourceEventKey]) // mỗi sự kiện nguồn ghi một lần
+  @@index([userId, createdAt])
+  @@map("loyalty_entries")
+}
+
+// - M10 Đánh giá sản phẩm -
+
+model Review {
+  version Int @default(1)
+
+  id          Int          @id @default(autoincrement())
+  productId   Int
+  userId      Int
+  orderItemId Int          @unique // mỗi dòng đơn đã nhận chỉ đánh giá một lần
+  rating      Int          @db.TinyInt // 1-5
+  content     String?      @db.Text
+  status      ReviewStatus @default(PENDING)
+  createdAt   DateTime     @default(now())
+
+  product   Product       @relation(fields: [productId], references: [id])
+  user      User          @relation(fields: [userId], references: [id])
+  orderItem OrderItem     @relation(fields: [orderItemId], references: [id])
+  images    ReviewImage[]
+
+  @@index([productId, status])
+  @@map("reviews")
+}
+
+model ReviewImage {
+  id        Int @id @default(autoincrement())
+  reviewId  Int
+  fileId    Int
+  sortOrder Int @default(0)
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  file   File   @relation(fields: [fileId], references: [id])
+
+  @@index([reviewId])
+  @@map("review_images")
+}
+
+model ProductRatingStats {
+  productId   Int      @id
+  avgRating   Decimal  @default(0) @db.Decimal(3, 2)
+  reviewCount Int      @default(0)
+  star1       Int      @default(0)
+  star2       Int      @default(0)
+  star3       Int      @default(0)
+  star4       Int      @default(0)
+  star5       Int      @default(0)
+  updatedAt   DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_rating_stats")
+}
+
+// - M11 Đổi trả -
+
+model ReturnRequest {
+  activeSlot             Int?            @default(1) // đang xử lý = 1; kết thúc = null cùng giao dịch
+  requestType            ReturnKind      @default(REFUND)
+  kiotReturnDocumentId   String?         @db.VarChar(100)
+  replacementKiotOrderId String?         @db.VarChar(100)
+  completedAt            DateTime?
+  refunds                Refund[]
+  receipts               ReturnReceipt[]
+
+  version Int @default(1)
+
+  id        Int          @id @default(autoincrement())
+  code      String       @unique @db.VarChar(30)
+  orderId   Int
+  userId    Int
+  status    ReturnStatus @default(REQUESTED)
+  reason    String       @db.VarChar(500)
+  adminNote String?      @db.VarChar(500)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  order   Order                @relation(fields: [orderId], references: [id])
+  user    User                 @relation(fields: [userId], references: [id])
+  items   ReturnRequestItem[]
+  images  ReturnRequestImage[]
+  history ReturnHistory[]
+
+  @@unique([orderId, activeSlot])
+  @@index([orderId])
+  @@index([status, createdAt])
+  @@map("return_requests")
+}
+
+// Số lượng hoàn trả theo từng dòng đơn (quantity <= số lượng đã mua, kiểm tra ở tầng ứng dụng)
+model ReturnRequestItem {
+  approvedQuantity  Int                 @default(0)
+  receivedQuantity  Int                 @default(0)
+  acceptedQuantity  Int                 @default(0)
+  resalableQuantity Int                 @default(0)
+  reservedQuantity  Int                 @default(0)
+  refundedNetAmount Decimal             @default(0) @db.Decimal(12, 0)
+  receiptItems      ReturnReceiptItem[]
+  // Kiểm tra lũy kế mọi yêu cầu cùng orderItemId, không chỉ từng request.
+
+  id          Int @id @default(autoincrement())
+  requestId   Int
+  orderItemId Int
+  quantity    Int
+
+  request   ReturnRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  orderItem OrderItem     @relation(fields: [orderItemId], references: [id])
+
+  @@unique([requestId, orderItemId])
+  @@index([orderItemId])
+  @@map("return_request_items")
+}
+
+model ReturnRequestImage {
+  id        Int @id @default(autoincrement())
+  requestId Int
+  fileId    Int
+
+  request ReturnRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  file    File          @relation(fields: [fileId], references: [id])
+
+  @@index([requestId])
+  @@map("return_request_images")
+}
+
+model ReturnHistory {
+  id         Int           @id @default(autoincrement())
+  requestId  Int
+  fromStatus ReturnStatus?
+  toStatus   ReturnStatus
+  actorId    Int?
+  note       String?       @db.VarChar(500)
+  createdAt  DateTime      @default(now())
+
+  request ReturnRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, createdAt])
+  @@map("return_history")
+}
+
+// - M12 Đặt may -
+
+model TailoringRequest {
+  garmentType        String    @db.VarChar(150)
+  quantity           Int
+  kiotOrderId        String?   @db.VarChar(100)
+  kiotOrderCode      String?   @db.VarChar(100)
+  kiotLinkVerifiedAt DateTime?
+  completedAt        DateTime?
+  // DONE chỉ khi khách chốt và đơn KiotViet đã xác minh.
+
+  version Int @default(1)
+
+  id          Int             @id @default(autoincrement())
+  code        String          @unique @db.VarChar(30)
+  userId      Int
+  status      TailoringStatus @default(NEW)
+  fullName    String          @db.VarChar(150)
+  phone       String          @db.VarChar(20)
+  email       String?         @db.VarChar(191)
+  description String          @db.Text
+  details     Json? // số đo, chất liệu, ngày cần... theo biểu mẫu
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  user    User               @relation(fields: [userId], references: [id])
+  history TailoringHistory[]
+
+  @@index([status, createdAt])
+  @@map("tailoring_requests")
+}
+
+model TailoringHistory {
+  id         Int              @id @default(autoincrement())
+  requestId  Int
+  fromStatus TailoringStatus?
+  toStatus   TailoringStatus
+  actorId    Int?
+  note       String?          @db.VarChar(500)
+  createdAt  DateTime         @default(now())
+
+  request TailoringRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, createdAt])
+  @@map("tailoring_history")
+}
+
+// - M13 Thông báo -
+
+model NotificationTemplate {
+  versions NotificationTemplateVersion[]
+
+  version Int @default(1)
+
+  id        Int      @id @default(autoincrement())
+  code      String   @unique @db.VarChar(60) // ví dụ ORDER_CONFIRMED
+  subject   String   @db.VarChar(255)
+  body      String   @db.Text // có biến {{orderCode}}, {{total}}...
+  variables Json?
+  isActive  Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  logs NotificationLog[]
+
+  @@map("notification_templates")
+}
+
+model NotificationLog {
+  subjectSnapshot String    @db.VarChar(255)
+  bodySnapshot    String    @db.Text
+  templateVersion Int?
+  queuedAt        DateTime  @default(now())
+  attemptedAt     DateTime?
+
+  id         Int                @id @default(autoincrement())
+  templateId Int?
+  event      String             @db.VarChar(60)
+  toEmail    String             @db.VarChar(191)
+  userId     Int?
+  refType    String?            @db.VarChar(30)
+  refId      Int?
+  status     NotificationStatus
+  error      String?            @db.VarChar(500)
+  sentAt     DateTime?
+
+  template NotificationTemplate? @relation(fields: [templateId], references: [id])
+
+  @@index([refType, refId])
+  @@index([status, sentAt])
+  @@map("notification_logs")
+}
+
+// - P Dịch vụ nền -
+
+model File {
+  purpose        String          @db.VarChar(40)
+  refundEvidence RefundAttempt[]
+
+  id           Int      @id @default(autoincrement())
+  storageKey   String   @unique @db.VarChar(255)
+  originalName String   @db.VarChar(255)
+  mimeType     String   @db.VarChar(100)
+  sizeBytes    Int
+  uploadedBy   Int?
+  createdAt    DateTime @default(now())
+
+  productImages       ProductImage[]
+  reviewImages        ReviewImage[]
+  returnRequestImages ReturnRequestImage[]
+
+  @@map("files")
+}
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  actorId    Int?
+  action     String   @db.VarChar(80)
+  entityType String   @db.VarChar(60)
+  entityId   String?  @db.VarChar(60)
+  before     Json?
+  after      Json?
+  ip         String?  @db.VarChar(45)
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
+}
+
+model SystemConfig {
+  version Int @default(1)
+
+  key       String   @id @db.VarChar(100) // ví dụ shipping_fee, loyalty_rules
+  value     Json
+  updatedBy Int?
+  updatedAt DateTime @updatedAt
+
+  @@map("system_configs")
+}
+
+model IdempotencyKey {
+  // Giữ khóa tài chính bền vững, không xóa khi nghiệp vụ chưa kết thúc.
+
+  id          BigInt   @id @default(autoincrement())
+  key         String   @db.VarChar(128)
+  subjectKey  String   @db.VarChar(100)
+  state       String   @default("PROCESSING") @db.VarChar(30)
+  resourceId  String?  @db.VarChar(100)
+  scope       String   @db.VarChar(191) // create_order | momo_ipn | kiotviet_webhook
+  requestHash String?  @db.VarChar(64)
+  response    Json?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@unique([subjectKey, scope, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+// Hàng đợi sự kiện nội bộ (transactional outbox): OrderCreated, PaymentSucceeded, ...
+model EventOutbox {
+  id            BigInt       @id @default(autoincrement())
+  eventType     String       @db.VarChar(60)
+  aggregateType String       @db.VarChar(40)
+  aggregateId   String       @db.VarChar(40)
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  createdAt     DateTime     @default(now())
+  processedAt   DateTime?
+
+  @@index([status, createdAt])
+  @@map("event_outbox")
+}
+
+model AuthSession {
+  id               Int       @id @default(autoincrement())
+  userId           Int
+  refreshTokenHash String    @unique @db.VarChar(128)
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  rotatedAt        DateTime?
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("auth_sessions")
+}
+
+model Size {
+  code      String           @id @db.VarChar(10)
+  name      String           @db.VarChar(60)
+  skuSuffix String           @unique @db.VarChar(10)
+  sortOrder Int              @default(0)
+  isActive  Boolean          @default(true)
+  variants  ProductVariant[]
+  chartRows SizeChartRow[]
+
+  @@map("sizes")
+}
+
+model SizeChart {
+  id         Int            @id @default(autoincrement())
+  name       String         @db.VarChar(150)
+  unit       String         @default("cm") @db.VarChar(10)
+  version    Int            @default(1)
+  isActive   Boolean        @default(true)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  rows       SizeChartRow[]
+  products   Product[]      @relation("ProductSizeChart")
+  categories Category[]     @relation("CategorySizeChart")
+
+  @@map("size_charts")
+}
+
+enum SyncState {
+  PENDING
+  CONFIRMED
+  NEEDS_RECONCILIATION
+}
+
+model PendingInventoryEffect {
+  id                   BigInt         @id @default(autoincrement())
+  variantId            Int
+  orderId              Int?
+  operationKey         String         @unique @db.VarChar(191)
+  delta                Int
+  sourceDocumentId     String?        @db.VarChar(100)
+  status               SyncState      @default(PENDING)
+  sourceAcknowledgedAt DateTime?
+  releasedAt           DateTime?
+  version              Int            @default(1)
+  createdAt            DateTime       @default(now())
+  variant              ProductVariant @relation(fields: [variantId], references: [id])
+  order                Order?         @relation(fields: [orderId], references: [id])
+
+  @@index([variantId, status])
+  @@map("pending_inventory_effects")
+}
+
+model InventoryAdjustment {
+  id                Int            @id @default(autoincrement())
+  variantId         Int
+  expectedVersion   Int
+  requestedQuantity Int
+  reason            String         @db.VarChar(500)
+  actorId           Int
+  status            SyncState      @default(PENDING)
+  operationKey      String         @unique @db.VarChar(191)
+  sourceDocumentId  String?        @db.VarChar(100)
+  sourceVersion     String?        @db.VarChar(100)
+  resultQuantity    Int?
+  createdAt         DateTime       @default(now())
+  confirmedAt       DateTime?
+  variant           ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@map("inventory_adjustments")
+}
+
+enum DeliveryStatus {
+  NOT_SHIPPED
+  IN_TRANSIT
+  FAILED
+  RETURNING
+  DELIVERED
+  RETURNED
+}
+
+enum PromotionType {
+  NONE
+  VOUCHER
+  MEMBER
+  BIRTHDAY
+}
+
+model PaymentSummary {
+  orderId              Int           @id
+  status               PaymentStatus @default(UNPAID)
+  paidAmount           Decimal       @default(0) @db.Decimal(14, 0)
+  refundedAmount       Decimal       @default(0) @db.Decimal(14, 0)
+  reservedRefundAmount Decimal       @default(0) @db.Decimal(14, 0)
+  version              Int           @default(1)
+  updatedAt            DateTime      @updatedAt
+  order                Order         @relation(fields: [orderId], references: [id])
+
+  @@map("payment_summaries")
+}
+
+enum RefundStatus {
+  PENDING_APPROVAL
+  APPROVED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  REJECTED
+  NEEDS_RECONCILIATION
+}
+
+enum RefundBasis {
+  CANCELLATION
+  RETURN
+  OVERPAYMENT
+}
+
+model Refund {
+  id              Int             @id @default(autoincrement())
+  orderId         Int
+  paymentId       Int
+  returnRequestId Int?
+  basisType       RefundBasis
+  basisKey        String          @unique @db.VarChar(191)
+  amount          Decimal         @db.Decimal(12, 0)
+  reservedAmount  Decimal         @default(0) @db.Decimal(12, 0)
+  status          RefundStatus    @default(PENDING_APPROVAL)
+  reason          String          @db.VarChar(500)
+  requestedBy     Int?
+  approvedBy      Int?
+  approvedAt      DateTime?
+  completedAt     DateTime?
+  version         Int             @default(1)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  order           Order           @relation(fields: [orderId], references: [id])
+  payment         Payment         @relation(fields: [paymentId], references: [id])
+  returnRequest   ReturnRequest?  @relation(fields: [returnRequestId], references: [id])
+  attempts        RefundAttempt[]
+  history         RefundHistory[]
+
+  // Khóa khoản thu khi giữ tiền. Tổng đã hoàn + đang giữ không vượt khoản thu đã xác minh.
+  // Kết quả chưa rõ giữ nguyên tiền giữ. Chỉ Admin duyệt/gửi lại/xác nhận thủ công.
+  @@index([paymentId, status])
+  @@map("refunds")
+}
+
+model RefundAttempt {
+  id                  Int               @id @default(autoincrement())
+  refundId            Int
+  attemptNo           Int
+  momoRefundOrderId   String?           @unique @db.VarChar(64)
+  momoRequestId       String?           @unique @db.VarChar(64)
+  momoOriginalTransId String?           @db.VarChar(64)
+  momoRefundTransId   String?           @db.VarChar(64)
+  status              TransactionStatus @default(PENDING)
+  amount              Decimal           @db.Decimal(12, 0)
+  requestSnapshot     Json?
+  sentAt              DateTime?
+  lastCheckedAt       DateTime?
+  resultCode          String?           @db.VarChar(60)
+  rawResponse         Json?
+  evidenceFileId      Int?
+  manualConfirmedBy   Int?
+  manualConfirmedAt   DateTime?
+  createdAt           DateTime          @default(now())
+  refund              Refund            @relation(fields: [refundId], references: [id])
+  evidenceFile        File?             @relation(fields: [evidenceFileId], references: [id])
+  history             RefundHistory[]
+
+  // Retry cùng lần gửi giữ mã và payload. Lần mới chỉ sau thất bại xác định.
+  @@unique([refundId, attemptNo])
+  @@map("refund_attempts")
+}
+
+model RefundHistory {
+  id        BigInt         @id @default(autoincrement())
+  refundId  Int
+  attemptId Int?
+  action    String         @db.VarChar(60)
+  actorId   Int?
+  detail    Json?
+  createdAt DateTime       @default(now())
+  refund    Refund         @relation(fields: [refundId], references: [id])
+  attempt   RefundAttempt? @relation(fields: [attemptId], references: [id])
+
+  @@index([refundId, createdAt])
+  @@map("refund_history")
+}
+
+enum CaseStatus {
+  OPEN
+  RESOLVED
+}
+
+model PaymentReconciliationCase {
+  id         Int        @id @default(autoincrement())
+  paymentId  Int
+  caseKey    String     @unique @db.VarChar(191)
+  reason     String     @db.VarChar(500)
+  status     CaseStatus @default(OPEN)
+  resolution String?    @db.Text
+  resolvedBy Int?
+  resolvedAt DateTime?
+  version    Int        @default(1)
+  createdAt  DateTime   @default(now())
+  payment    Payment    @relation(fields: [paymentId], references: [id])
+
+  @@map("payment_reconciliation_cases")
+}
+
+model MembershipPolicy {
+  id                        Int      @id @default(autoincrement())
+  version                   Int      @unique
+  effectiveFrom             DateTime
+  birthdayDaysBefore        Int      @default(15)
+  birthdayDaysAfter         Int      @default(15)
+  unrankedBirthdayThreshold Decimal  @default(3000000) @db.Decimal(14, 0)
+  unrankedBirthdayPercent   Decimal  @default(10) @db.Decimal(5, 2)
+  tierRules                 Json // LOYAL 10 triệu: 5/10%; VIP 20 triệu: 10/15%; SUPER_VIP 30 triệu: 15/20%
+  createdBy                 Int?
+  createdAt                 DateTime @default(now())
+
+  // Bảo toàn chính sách từ 06/02/2023 và cơ chế tích lũy hiện hành.
+  @@map("membership_policies")
+}
+
+enum BirthdayUsageStatus {
+  HELD
+  USED
+  RELEASED
+  PENDING_VERIFICATION
+}
+
+model BirthdayUsage {
+  id              Int                 @id @default(autoincrement())
+  profileId       Int
+  birthdayYear    Int // năm ngày sinh nhật, kể cả cửa sổ qua năm mới
+  orderId         Int?                @unique
+  sourceInvoiceId String?             @db.VarChar(100)
+  status          BirthdayUsageStatus @default(HELD)
+  activeSlot      Int?                @default(1) // giữ/đã dùng/chờ xác minh = 1; giải phóng = null
+  heldAt          DateTime            @default(now())
+  usedAt          DateTime?
+  releasedAt      DateTime?
+  version         Int                 @default(1)
+  profile         MemberProfile       @relation(fields: [profileId], references: [id])
+  order           Order?              @relation(fields: [orderId], references: [id])
+
+  @@unique([profileId, birthdayYear, activeSlot])
+  @@map("birthday_usages")
+}
+
+enum ReturnKind {
+  REFUND
+  EXCHANGE
+}
+
+model ReturnReceipt {
+  id             Int                 @id @default(autoincrement())
+  requestId      Int
+  operationKey   String              @unique @db.VarChar(191)
+  kiotDocumentId String?             @db.VarChar(100)
+  receivedAt     DateTime
+  actorId        Int
+  note           String?             @db.VarChar(500)
+  createdAt      DateTime            @default(now())
+  request        ReturnRequest       @relation(fields: [requestId], references: [id])
+  items          ReturnReceiptItem[]
+  loyaltyEntries LoyaltyEntry[]
+
+  @@index([receivedAt])
+  @@map("return_receipts")
+}
+
+model ReturnReceiptItem {
+  id                Int               @id @default(autoincrement())
+  receiptId         Int
+  requestItemId     Int
+  receivedQuantity  Int
+  acceptedQuantity  Int
+  resalableQuantity Int
+  netAmountDelta    Decimal           @db.Decimal(12, 0)
+  receipt           ReturnReceipt     @relation(fields: [receiptId], references: [id])
+  requestItem       ReturnRequestItem @relation(fields: [requestItemId], references: [id])
+
+  // 0 <= bán lại <= chấp nhận <= nhận. Giá trị hoàn không vượt tiền ròng dòng gốc.
+  @@unique([receiptId, requestItemId])
+  @@map("return_receipt_items")
+}
+
+model DeliveryReturnReceipt {
+  id             Int                  @id @default(autoincrement())
+  orderId        Int
+  sourceKey      String               @unique @db.VarChar(191)
+  kiotDocumentId String               @db.VarChar(100)
+  receivedAt     DateTime
+  actorId        Int?
+  order          Order                @relation(fields: [orderId], references: [id])
+  items          DeliveryReturnItem[]
+
+  @@map("delivery_return_receipts")
+}
+
+model DeliveryReturnItem {
+  id                Int                   @id @default(autoincrement())
+  receiptId         Int
+  orderItemId       Int
+  receivedQuantity  Int
+  resalableQuantity Int
+  receipt           DeliveryReturnReceipt @relation(fields: [receiptId], references: [id])
+  orderItem         OrderItem             @relation(fields: [orderItemId], references: [id])
+
+  @@unique([receiptId, orderItemId])
+  @@map("delivery_return_items")
+}
+
+model CheckoutContext {
+  id        Int             @id @default(autoincrement())
+  userId    Int
+  source    String          @db.VarChar(20)
+  items     Json // snapshot SKU/số lượng, không giữ tồn
+  expiresAt DateTime
+  version   Int             @default(1)
+  createdAt DateTime        @default(now())
+  user      User            @relation(fields: [userId], references: [id])
+  quotes    CheckoutQuote[]
+
+  @@map("checkout_contexts")
+}
+
+model CheckoutQuote {
+  id                Int             @id @default(autoincrement())
+  contextId         Int
+  subtotal          Decimal         @db.Decimal(12, 0)
+  discountAmount    Decimal         @db.Decimal(12, 0)
+  shippingFee       Decimal         @db.Decimal(12, 0)
+  totalAmount       Decimal         @db.Decimal(12, 0)
+  promotionSnapshot Json
+  itemsSnapshot     Json
+  expiresAt         DateTime
+  createdAt         DateTime        @default(now())
+  context           CheckoutContext @relation(fields: [contextId], references: [id])
+  order             Order?
+
+  // Tạo đơn tính lại tại backend. Tổng đổi yêu cầu khách xác nhận lại.
+  @@map("checkout_quotes")
+}
+
+model SourceInvoice {
+  id               Int            @id @default(autoincrement())
+  sourceSystem     String         @db.VarChar(30)
+  sourceInvoiceId  String         @db.VarChar(100)
+  sourceCustomerId String         @db.VarChar(100)
+  channel          String         @db.VarChar(30)
+  memberProfileId  Int?
+  webOrderId       Int?
+  eligibleRevenue  Decimal        @db.Decimal(14, 0)
+  occurredAt       DateTime
+  sourceVersion    String?        @db.VarChar(100)
+  payload          Json?
+  verifiedAt       DateTime?
+  createdAt        DateTime       @default(now())
+  memberProfile    MemberProfile? @relation(fields: [memberProfileId], references: [id])
+  webOrder         Order?         @relation(fields: [webOrderId], references: [id])
+
+  // Cùng hóa đơn xuất hiện ở web và nguồn chỉ ghi doanh số một lần.
+  // eligibleRevenue theo cơ chế hiện hành, không mặc định bằng tiền hàng ròng.
+  @@unique([sourceSystem, sourceInvoiceId])
+  @@index([memberProfileId, occurredAt])
+  @@map("source_invoices")
+}
+
+model NotificationTemplateVersion {
+  id         Int                  @id @default(autoincrement())
+  templateId Int
+  version    Int
+  subject    String               @db.VarChar(255)
+  body       String               @db.Text
+  variables  Json?
+  createdBy  Int?
+  createdAt  DateTime             @default(now())
+  template   NotificationTemplate @relation(fields: [templateId], references: [id])
+
+  @@unique([templateId, version])
+  @@map("notification_template_versions")
 }

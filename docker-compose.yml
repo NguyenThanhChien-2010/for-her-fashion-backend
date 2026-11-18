@@ -4,14 +4,14 @@ services:
     environment:
       MYSQL_DATABASE: for_her_fashion_dev
       MYSQL_USER: app_user
-      MYSQL_PASSWORD: change-me
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me}
       MYSQL_ROOT_PASSWORD: local-root-change-me
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uapp_user", "-pchange-me", "--silent"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -20,7 +20,7 @@ services:
     build: .
     env_file: .env
     environment:
-      DATABASE_URL: mysql://app_user:change-me@mysql:3306/for_her_fashion_dev
+      DATABASE_URL: mysql://app_user:${MYSQL_PASSWORD:-change-me}@mysql:3306/for_her_fashion_dev
     ports:
       - "3000:3000"
     depends_on:

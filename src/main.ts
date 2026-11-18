@@ -1,22 +1,21 @@
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
+import { load as parseYaml } from 'js-yaml';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
-  app.setGlobalPrefix('api');
+  app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('For Her Fashion API')
-    .setDescription('Backend API documentation')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, swaggerConfig));
+  const contractPath = join(process.cwd(), 'docs', 'for-her-fashion-openapi.yaml');
+  const contract = parseYaml(readFileSync(contractPath, 'utf8')) as OpenAPIObject;
+  SwaggerModule.setup('docs', app, contract);
 
   await app.listen(config.get<number>('PORT') ?? 3000);
 }
