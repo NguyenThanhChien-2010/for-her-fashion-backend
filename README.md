@@ -52,7 +52,7 @@ Tạo connection với host `127.0.0.1`, port `3307`, user `app_user`, password 
 - Swagger UI: `http://localhost:3000/docs`
 - OpenAPI contract: [`docs/for-her-fashion-openapi.yaml`](docs/for-her-fashion-openapi.yaml)
 
-Swagger UI hiển thị contract API đã thống nhất. Các endpoint trong contract là đặc tả; cần được triển khai theo từng module trước khi có thể gọi thành công.
+Swagger UI phục vụ contract API đã thống nhất (`docs/for-her-fashion-openapi.yaml`, 102 path của 14 module). M01 và Shared đã được triển khai thật; các path còn lại là đặc tả cho module tương ứng và sẽ trả 404 cho tới khi module đó được merge.
 
 ## Prisma schema và migration
 
@@ -73,7 +73,60 @@ npm run prisma:generate
 npm run lint -- --no-fix
 npm run build
 npm test -- --runInBand
+npm run test:e2e
 ```
+
+`npm test` chạy unit test (Jest) trong `src/`, `tests/`. `npm run test:e2e` chạy các suite `*.e2e-spec.ts`
+trong `tests/` bằng [jest-e2e.config.js](jest-e2e.config.js); E2E boot module graph thật nhưng stub
+`PrismaService` nên không cần MySQL đang chạy.
+
+### Bộ test hiện có
+
+| Lớp | Nội dung |
+|---|---|
+| `src/common/common.spec.ts` | Envelope `{ data, traceId }`, 204 không body, map Prisma P2002/P2025/P2034, 401/403/404, `X-Request-ID` |
+| `src/modules/auth/auth.service.spec.ts` | Đăng ký, xác thực email, login email/SĐT, rememberMe TTL, xoay token, replay detection, reset password thu hồi phiên, audit log |
+| `src/modules/auth/admin-accounts.service.spec.ts` | Phân trang, phạm vi Staff/Admin, optimistic locking, tự khóa, tạo tài khoản nội bộ |
+| `src/modules/auth/dto/auth.dto.spec.ts` | Biên mật khẩu, SĐT, pagination, `version`/`reason` bắt buộc |
+| `src/modules/auth/strategies/jwt.strategy.spec.ts` | Claim sai, tài khoản LOCKED, chưa xác thực, `sid` cho logout |
+| `src/modules/uploads/uploads.controller.spec.ts` | Schema `Upload`, chặn MIME sai, dọn file khi ghi DB lỗi |
+| `tests/*.e2e-spec.ts` | Route contract, 204, phân quyền, upload multipart, Swagger đủ path M01/Shared |
+
+## Seed tài khoản quản trị
+
+Tạo Admin đầu tiên cho môi trường local (idempotent — chạy lại không tạo trùng):
+
+```powershell
+$env:SEED_ADMIN_PASSWORD='mat-khau-du-manh-cua-ban'
+npm run prisma:seed
+```
+
+Tùy chọn: `SEED_ADMIN_EMAIL` (mặc định `admin@forher.local`), `SEED_ADMIN_FULL_NAME`.
+Script từ chối chạy nếu thiếu `SEED_ADMIN_PASSWORD` hoặc mật khẩu ngắn hơn 8 ký tự; không hardcode mật khẩu trong repo.
+
+## Kiến trúc M01 & hạ tầng dùng chung
+
+```
+src/
+├─ common/
+│  ├─ config/        Joi schema fail-fast cho biến môi trường
+│  ├─ decorators/    @Public(), @Roles(), @CurrentUser(), @IdempotencyKey()
+│  ├─ errors/        ErrorCode/ErrorMessage + validationExceptionFactory
+│  ├─ filters/       AllExceptionsFilter → { error, traceId }
+│  ├─ guards/        JwtAuthGuard (global), RolesGuard (global)
+│  ├─ interceptors/  TransformResponseInterceptor → { data, traceId }
+│  ├─ services/      FileUploadService (magic byte), IdempotencyService
+│  └─ swagger/       Tag M01..M14 + Shared, scheme BearerAuth
+├─ modules/auth/     AuthController, MeController, AdminAuthController, AdminAccountsController
+└─ modules/uploads/  UploadsController (tag Shared)
+```
+
+Quy ước bắt buộc khi thêm module mới:
+
+- Controller trả dữ liệu thô; envelope `{ data, traceId }` do interceptor lo.
+- Ném lỗi qua `apiErrorPayload(code, message, details)` để client nhận đúng `error.code`.
+- Route mặc định cần JWT; chỉ thêm `@Public()` cho endpoint thật sự công khai.
+- Thao tác ghi của module khác dùng `IdempotencyService.execute(...)` với header `Idempotency-Key`.
 
 Test kiểm tra contract OpenAPI được parse và có version/path hợp lệ. Chưa có tích hợp MoMo, KiotViet hoặc email; khi bổ sung, test các tích hợp này bằng mock và không dùng credentials thật.
 
