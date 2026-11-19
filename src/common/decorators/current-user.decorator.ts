@@ -5,14 +5,14 @@ import type { User } from '@prisma/client';
 // sessionId là id AuthSession gắn với access token hiện tại, dùng cho /auth/logout thu hồi đúng một phiên.
 // Schema Leader dùng User.id Int nên id ở đây là number; controller chuyển sang chuỗi khi trả contract.
 export type AuthenticatedUser = Omit<User, 'passwordHash'> & {
-  sessionId?: string;
+  sessionId: string;
 };
 
 export const CurrentUser = createParamDecorator(
   (_data: unknown, context: ExecutionContext): AuthenticatedUser => {
     const { user } = context
       .switchToHttp()
-      .getRequest<{ user?: User & { sessionId?: string } }>();
+      .getRequest<{ user?: User & { sessionId: string } }>();
     if (!user) throw new UnauthorizedException('Authentication required');
     // Bỏ passwordHash khỏi payload trả cho controller.
     return Object.fromEntries(

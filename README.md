@@ -132,6 +132,6 @@ Test kiểm tra contract OpenAPI được parse và có version/path hợp lệ.
 
 ## GitHub Actions CI
 
-CI chạy khi tạo/cập nhật Pull Request vào `main` và khi push lên `main`. Workflow dùng Node.js 24, `npm ci`, MySQL 8 tạm cho test, rồi validate/generate Prisma, áp dụng migration, lint chỉ kiểm tra (`--no-fix`), build và test. CI dùng `DATABASE_URL` riêng, không đọc `.env` local.
+CI chạy khi tạo/cập nhật Pull Request vào `main` và khi push lên `main`. Workflow dùng Node.js 24, `npm ci`, MySQL 8 tạm, validate/generate Prisma, áp dụng migration trên database CI sạch, lint chỉ kiểm tra (`--no-fix`), build, unit test và HTTP E2E. E2E stub Prisma nên không gọi database; bước migration riêng xác minh schema/migration trên MySQL CI. CI dùng `DATABASE_URL` riêng, không đọc `.env` local.
 
 Trong GitHub, mở **Checks** ở PR hoặc commit rồi chọn **Details** để xem log. Khi `Application checks` thành công, các bước kiểm tra ứng dụng trong workflow đã chạy qua.
