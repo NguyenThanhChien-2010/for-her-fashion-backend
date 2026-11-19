@@ -91,7 +91,12 @@ describe('M01 + Shared HTTP contract', () => {
         findUniqueOrThrow: jest.fn(() => Promise.resolve(targetUser)),
       },
       authSession: {
-        findUnique: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 10,
+          userId: 1,
+          revokedAt: null,
+          expiresAt: new Date(Date.now() + 60_000),
+        }),
         create: jest.fn().mockResolvedValue({ id: 10 }),
         update: jest.fn().mockResolvedValue({ id: 10 }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -154,6 +159,12 @@ describe('M01 + Shared HTTP contract', () => {
     currentUser = userRow();
     targetUser = userRow({ id: 2, email: 'target@example.com', role: UserRole.STAFF });
     jest.clearAllMocks();
+    prisma.authSession.findUnique.mockResolvedValue({
+      id: 10,
+      userId: 1,
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
   });
 
   const accessToken = (overrides: Record<string, unknown> = {}) =>
@@ -226,6 +237,33 @@ describe('M01 + Shared HTTP contract', () => {
       },
       traceId: expect.any(String),
     });
+  });
+
+  it('GET /me ignores a caller-supplied user id and uses the authenticated owner', async () => {
+    const result = await request(app.getHttpServer())
+      .get('/api/v1/me?userId=2')
+      .set('Authorization', `Bearer ${accessToken()}`)
+      .expect(200);
+
+    expect(result.body.data.id).toBe('1');
+    expect(prisma.user.findUnique.mock.calls.every(([args]) => args.where.id === 1)).toBe(true);
+  });
+
+  it('rejects an access token immediately after its session is revoked', async () => {
+    prisma.authSession.findUnique.mockResolvedValueOnce({
+      id: 10,
+      userId: 1,
+      revokedAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const result = await request(app.getHttpServer())
+      .get('/api/v1/me')
+      .set('Authorization', `Bearer ${accessToken()}`)
+      .expect(401);
+
+    expect(result.body.error.code).toBe('UNAUTHORIZED');
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
   });
 
   it('POST /auth/logout answers 204 with no response body', async () => {

@@ -10,7 +10,7 @@ const config = new ConfigService({
   JWT_ACCESS_SECRET: 'access-test-secret-value-32-chars-x',
   JWT_REFRESH_SECRET: 'refresh-test-secret-value-32-chars',
 });
-const payload = { sub: '1', email: 'user@example.com', role: UserRole.CUSTOMER, type: 'access' };
+const payload = { sub: '1', sid: '10', email: 'user@example.com', role: UserRole.CUSTOMER, type: 'access' };
 const user = (overrides: Partial<User> = {}): User => ({
   id: 1,
   email: 'user@example.com',
@@ -28,11 +28,23 @@ const user = (overrides: Partial<User> = {}): User => ({
   ...overrides,
 });
 
-function setup(record: User | null = user()) {
+function setup(
+  record: User | null = user(),
+  session: { userId: number; revokedAt: Date | null; expiresAt: Date } | null = {
+    userId: 1,
+    revokedAt: null,
+    expiresAt: new Date(Date.now() + 60_000),
+  },
+) {
   const findUnique = jest.fn().mockResolvedValue(record);
+  const findSession = jest.fn().mockResolvedValue(session);
   return {
-    strategy: new JwtStrategy(config, { user: { findUnique } } as unknown as PrismaService),
+    strategy: new JwtStrategy(config, {
+      user: { findUnique },
+      authSession: { findUnique: findSession },
+    } as unknown as PrismaService),
     findUnique,
+    findSession,
   };
 }
 
@@ -55,8 +67,19 @@ describe('JWT strategies', () => {
 
   it('carries the AuthSession sid as sessionId for logout', async () => {
     const { strategy } = setup();
-    const result = await strategy.validate({ ...payload, sid: '10' });
+    const result = await strategy.validate(payload);
     expect(result.sessionId).toBe('10');
+  });
+
+  it.each([
+    ['revoked', { userId: 1, revokedAt: new Date(), expiresAt: new Date(Date.now() + 60_000) }],
+    ['expired', { userId: 1, revokedAt: null, expiresAt: new Date(Date.now() - 1) }],
+    ['owned by another user', { userId: 2, revokedAt: null, expiresAt: new Date(Date.now() + 60_000) }],
+    ['missing', null],
+  ])('rejects an access token for a %s session', async (_label, session) => {
+    const { strategy, findUnique } = setup(user(), session);
+    await expect(strategy.validate(payload)).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
   it.each([null, user({ emailVerifiedAt: null })])(
@@ -74,6 +97,10 @@ describe('JWT strategies', () => {
     { ...payload, type: 'refresh' },
     { ...payload, sub: 'abc' },
     { ...payload, sub: '0' },
+    { ...payload, sid: undefined },
+    { ...payload, sid: '0' },
+    { ...payload, sid: 'not-a-number' },
+    { ...payload, sid: '9007199254740992' },
     { ...payload, email: null },
     { ...payload, role: 'ROOT' },
   ])('rejects malformed access claims before querying DB %#', async (claims) => {

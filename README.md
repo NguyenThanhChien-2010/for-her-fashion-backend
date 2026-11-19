@@ -126,12 +126,13 @@ Quy ước bắt buộc khi thêm module mới:
 - Controller trả dữ liệu thô; envelope `{ data, traceId }` do interceptor lo.
 - Ném lỗi qua `apiErrorPayload(code, message, details)` để client nhận đúng `error.code`.
 - Route mặc định cần JWT; chỉ thêm `@Public()` cho endpoint thật sự công khai.
+- API tài nguyên thuộc người dùng phải lấy owner ID từ `@CurrentUser()` và đưa điều kiện owner vào truy vấn đọc/cập nhật/xóa; không tin `userId`/`ownerId` do request gửi. Truy cập chéo tài khoản chỉ được mở qua endpoint có role policy rõ ràng.
 - Thao tác ghi của module khác dùng `IdempotencyService.execute(...)` với header `Idempotency-Key`.
 
 Test kiểm tra contract OpenAPI được parse và có version/path hợp lệ. Chưa có tích hợp MoMo, KiotViet hoặc email; khi bổ sung, test các tích hợp này bằng mock và không dùng credentials thật.
 
 ## GitHub Actions CI
 
-CI chạy khi tạo/cập nhật Pull Request vào `main` và khi push lên `main`. Workflow dùng Node.js 24, `npm ci`, MySQL 8 tạm cho test, rồi validate/generate Prisma, áp dụng migration, lint chỉ kiểm tra (`--no-fix`), build và test. CI dùng `DATABASE_URL` riêng, không đọc `.env` local.
+CI chạy khi tạo/cập nhật Pull Request vào `main` và khi push lên `main`. Workflow dùng Node.js 24, `npm ci`, MySQL 8 tạm, validate/generate Prisma, áp dụng migration trên database CI sạch, lint chỉ kiểm tra (`--no-fix`), build, unit test và HTTP E2E. E2E stub Prisma nên không gọi database; bước migration riêng xác minh schema/migration trên MySQL CI. CI dùng `DATABASE_URL` riêng, không đọc `.env` local.
 
 Trong GitHub, mở **Checks** ở PR hoặc commit rồi chọn **Details** để xem log. Khi `Application checks` thành công, các bước kiểm tra ứng dụng trong workflow đã chạy qua.

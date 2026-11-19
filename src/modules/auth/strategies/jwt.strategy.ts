@@ -11,7 +11,7 @@ export interface JwtPayload {
   email: string;
   role: UserRole;
   type: 'access';
-  sid?: string;
+  sid: string;
   iat?: number;
   exp?: number;
 }
@@ -43,6 +43,10 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       claims.type !== 'access' ||
       typeof claims.sub !== 'string' ||
       !/^[1-9]\d*$/.test(claims.sub) ||
+      !Number.isSafeInteger(Number(claims.sub)) ||
+      typeof claims.sid !== 'string' ||
+      !/^[1-9]\d*$/.test(claims.sid) ||
+      !Number.isSafeInteger(Number(claims.sid)) ||
       typeof claims.email !== 'string' ||
       !claims.email.trim() ||
       !Object.values(UserRole).includes(claims.role as UserRole)
@@ -51,6 +55,20 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     }
 
     const userId = Number(claims.sub);
+    const sessionId = Number(claims.sid);
+    const session = await this.prisma.authSession.findUnique({
+      where: { id: sessionId },
+      select: { userId: true, revokedAt: true, expiresAt: true },
+    });
+    if (
+      !session ||
+      session.userId !== userId ||
+      session.revokedAt !== null ||
+      session.expiresAt <= new Date()
+    ) {
+      throw new UnauthorizedException('Session is invalid, revoked, or expired');
+    }
+
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
     if (user.status === UserStatus.LOCKED) {
@@ -64,9 +82,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     const safeUser = Object.fromEntries(
       Object.entries(user).filter(([key]) => key !== 'passwordHash'),
     ) as Omit<typeof user, 'passwordHash'>;
-    // sid xác định AuthSession để /auth/logout chỉ thu hồi đúng phiên đang dùng.
-    return typeof claims.sid === 'string' && claims.sid
-      ? { ...safeUser, sessionId: claims.sid }
-      : safeUser;
+    // Chỉ phiên còn hiệu lực mới tới được controller; sid này được dùng khi logout.
+    return { ...safeUser, sessionId: claims.sid };
   }
 }
