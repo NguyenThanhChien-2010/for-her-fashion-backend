@@ -126,6 +126,7 @@ Quy ước bắt buộc khi thêm module mới:
 - Controller trả dữ liệu thô; envelope `{ data, traceId }` do interceptor lo.
 - Ném lỗi qua `apiErrorPayload(code, message, details)` để client nhận đúng `error.code`.
 - Route mặc định cần JWT; chỉ thêm `@Public()` cho endpoint thật sự công khai.
+- API tài nguyên thuộc người dùng phải lấy owner ID từ `@CurrentUser()` và đưa điều kiện owner vào truy vấn đọc/cập nhật/xóa; không tin `userId`/`ownerId` do request gửi. Truy cập chéo tài khoản chỉ được mở qua endpoint có role policy rõ ràng.
 - Thao tác ghi của module khác dùng `IdempotencyService.execute(...)` với header `Idempotency-Key`.
 
 Test kiểm tra contract OpenAPI được parse và có version/path hợp lệ. Chưa có tích hợp MoMo, KiotViet hoặc email; khi bổ sung, test các tích hợp này bằng mock và không dùng credentials thật.
