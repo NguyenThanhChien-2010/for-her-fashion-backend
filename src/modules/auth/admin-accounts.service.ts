@@ -176,16 +176,13 @@ export class AdminAccountsService {
       },
     });
 
-    await tx.auditLog.create({
-      data: {
-        ...(creatorId !== null ? { actorId: creatorId } : {}),
-        action: 'INTERNAL_ACCOUNT_CREATE',
-        entityType: 'User',
-        entityId: String(user.id),
-        after: {
-          role: user.role,
-          status: user.status,
-        } satisfies Prisma.InputJsonObject,
+    await this.createUserAuditLog(tx, {
+      actorId: creatorId,
+      action: 'INTERNAL_ACCOUNT_CREATE',
+      entityId: String(user.id),
+      after: {
+        role: user.role,
+        status: user.status,
       },
     });
 
@@ -280,14 +277,11 @@ export class AdminAccountsService {
         });
       }
       // AuditLog của Leader là nơi lưu lý do/actor để truy vết về sau.
-      await tx.auditLog.create({
-        data: {
-          ...(actorId !== null ? { actorId } : {}),
-          action: audit.action,
-          entityType: 'User',
-          entityId: String(accountId),
-          after: { reason: audit.reason } satisfies Prisma.InputJsonObject,
-        },
+      await this.createUserAuditLog(tx, {
+        actorId,
+        action: audit.action,
+        entityId: String(accountId),
+        after: { reason: audit.reason },
       });
       this.logger.info(
         {
@@ -298,6 +292,26 @@ export class AdminAccountsService {
         },
         'Account administration update',
       );
+    });
+  }
+
+  private createUserAuditLog(
+    tx: PrismaTransactionClient,
+    audit: {
+      actorId: number | null;
+      action: string;
+      entityId: string;
+      after: Prisma.InputJsonObject;
+    },
+  ) {
+    return tx.auditLog.create({
+      data: {
+        ...(audit.actorId !== null ? { actorId: audit.actorId } : {}),
+        action: audit.action,
+        entityType: 'User',
+        entityId: audit.entityId,
+        after: audit.after,
+      },
     });
   }
 

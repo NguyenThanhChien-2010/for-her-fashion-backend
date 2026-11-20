@@ -316,13 +316,7 @@ export class AuthService {
       stored.revokedAt ||
       stored.refreshTokenHash !== this.hashToken(refreshToken)
     ) {
-      await this.revokeActiveSessions(numericUserId);
-      throw new UnauthorizedException(
-        apiErrorPayload(
-          ErrorCode.UNAUTHORIZED,
-          'Phát hiện tái sử dụng token. Vui lòng đăng nhập lại.',
-        ),
-      );
+      return this.rejectRefreshReplay(numericUserId);
     }
     if (stored.user.status === UserStatus.LOCKED) {
       throw new UnauthorizedException(
@@ -361,14 +355,7 @@ export class AuthService {
       return rotated.count > 0;
     });
     if (!rotationSucceeded) {
-      // Thu hồi sau khi transaction hoàn tất để không bị rollback cùng lần xoay thất bại.
-      await this.revokeActiveSessions(numericUserId);
-      throw new UnauthorizedException(
-        apiErrorPayload(
-          ErrorCode.UNAUTHORIZED,
-          'Phát hiện tái sử dụng token. Vui lòng đăng nhập lại.',
-        ),
-      );
+      return this.rejectRefreshReplay(numericUserId);
     }
 
     return {
@@ -615,6 +602,17 @@ export class AuthService {
       where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+  }
+
+  private async rejectRefreshReplay(userId: number): Promise<never> {
+    // Revoke after the rotation transaction completes so the revocation is not rolled back.
+    await this.revokeActiveSessions(userId);
+    throw new UnauthorizedException(
+      apiErrorPayload(
+        ErrorCode.UNAUTHORIZED,
+        'Phát hiện tái sử dụng token. Vui lòng đăng nhập lại.',
+      ),
+    );
   }
 
   private hashPassword(password: string): Promise<string> {
