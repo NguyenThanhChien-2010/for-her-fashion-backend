@@ -9,6 +9,7 @@ import { PinoLogger } from 'nestjs-pino';
 import { Prisma, User, UserRole, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../../modules/prisma/prisma.service';
+import type { PrismaTransactionClient } from '../../common/database/prisma.service';
 import { apiErrorPayload, ErrorCode, ErrorMessage } from '../../common/errors/api-error';
 import { IdempotencyService } from '../../common/services/idempotency.service';
 import { AuthService } from './auth.service';
@@ -119,25 +120,29 @@ export class AdminAccountsService {
     idempotencyKey: string,
     requester: { id: string },
   ): Promise<AccountResponse> {
-    return this.idempotency.execute(
+    const account = (await this.idempotency.execute(
       requester.id,
       idempotencyKey,
       'admin.accounts.create',
-      async () => ({
+      async (tx) => ({
         statusCode: 201,
         // Bản ghi idempotency lưu JSON thuần, không phải class instance.
-        data: (await this.createAccount(dto, requester.id)) as unknown as Prisma.JsonObject,
+        data: (await this.createAccount(tx, dto, requester.id)) as unknown as Prisma.JsonObject,
       }),
-    ) as unknown as Promise<AccountResponse>;
+    )) as unknown as AccountResponse;
+
+    this.logger.info({ accountId: account.id }, 'Internal account create request completed');
+    return account;
   }
 
   private async createAccount(
+    tx: PrismaTransactionClient,
     dto: InternalAccountCreateDto,
     createdBy: string,
   ): Promise<AccountResponse> {
     const email = dto.email.trim().toLowerCase();
     const phone = dto.phone?.trim();
-    const duplicate = await this.prisma.user.findFirst({
+    const duplicate = await tx.user.findFirst({
       where: { OR: [{ email }, ...(phone ? [{ phone }] : [])] },
       select: { id: true },
     });
@@ -157,7 +162,7 @@ export class AdminAccountsService {
       parallelism: 4,
     });
     const creatorId = parseContractId(createdBy);
-    const user = await this.prisma.user.create({
+    const user = await tx.user.create({
       data: {
         email,
         passwordHash,
@@ -171,7 +176,16 @@ export class AdminAccountsService {
       },
     });
 
-    this.logger.info({ accountId: user.id }, 'Internal account created');
+    await this.createUserAuditLog(tx, {
+      actorId: creatorId,
+      action: 'INTERNAL_ACCOUNT_CREATE',
+      entityId: String(user.id),
+      after: {
+        role: user.role,
+        status: user.status,
+      },
+    });
+
     return this.authService.toAccount(user);
   }
 
@@ -263,14 +277,11 @@ export class AdminAccountsService {
         });
       }
       // AuditLog của Leader là nơi lưu lý do/actor để truy vết về sau.
-      await tx.auditLog.create({
-        data: {
-          ...(actorId !== null ? { actorId } : {}),
-          action: audit.action,
-          entityType: 'User',
-          entityId: String(accountId),
-          after: { reason: audit.reason } satisfies Prisma.InputJsonObject,
-        },
+      await this.createUserAuditLog(tx, {
+        actorId,
+        action: audit.action,
+        entityId: String(accountId),
+        after: { reason: audit.reason },
       });
       this.logger.info(
         {
@@ -281,6 +292,26 @@ export class AdminAccountsService {
         },
         'Account administration update',
       );
+    });
+  }
+
+  private createUserAuditLog(
+    tx: PrismaTransactionClient,
+    audit: {
+      actorId: number | null;
+      action: string;
+      entityId: string;
+      after: Prisma.InputJsonObject;
+    },
+  ) {
+    return tx.auditLog.create({
+      data: {
+        ...(audit.actorId !== null ? { actorId: audit.actorId } : {}),
+        action: audit.action,
+        entityType: 'User',
+        entityId: audit.entityId,
+        after: audit.after,
+      },
     });
   }
 

@@ -24,7 +24,11 @@ function accountRow(overrides: Partial<User> = {}): User {
 
 function deps() {
   const tx = {
-    user: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    user: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     authSession: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     auditLog: { create: jest.fn().mockResolvedValue({ id: 1 }) },
   };
@@ -52,8 +56,8 @@ function deps() {
         _subject: string,
         _key: string,
         _scope: string,
-        fn: () => Promise<{ statusCode: number; data: unknown }>,
-      ) => (await fn()).data,
+        fn: (transaction: typeof tx) => Promise<{ statusCode: number; data: unknown }>,
+      ) => (await fn(tx)).data,
     ),
   };
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
@@ -206,7 +210,7 @@ describe('AdminAccountsService', () => {
 
   it('creates an internal account as ACTIVE and email-verified', async () => {
     const d = deps();
-    d.prisma.user.create.mockResolvedValue(accountRow({ role: UserRole.ADMIN }));
+    d.tx.user.create.mockResolvedValue(accountRow({ role: UserRole.ADMIN, createdBy: 1 }));
     const result = await d.service.create(
       {
         fullName: 'Nhân viên mới',
@@ -218,7 +222,7 @@ describe('AdminAccountsService', () => {
       { id: '1' },
     );
     expect(result.role).toBe(UserRole.ADMIN);
-    expect(d.prisma.user.create).toHaveBeenCalledWith(
+    expect(d.tx.user.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           role: UserRole.ADMIN,
@@ -227,6 +231,17 @@ describe('AdminAccountsService', () => {
         }),
       }),
     );
+    expect(d.tx.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        actorId: 1,
+        action: 'INTERNAL_ACCOUNT_CREATE',
+        entityType: 'User',
+        entityId: '2',
+        after: { role: UserRole.ADMIN, status: UserStatus.ACTIVE },
+      },
+    });
+    expect(d.prisma.user.create).not.toHaveBeenCalled();
+    expect(d.prisma.user.findFirst).not.toHaveBeenCalled();
     expect(d.idempotency.execute).toHaveBeenCalledWith(
       '1',
       'idempotency-key-123456',
@@ -237,7 +252,7 @@ describe('AdminAccountsService', () => {
 
   it('rejects duplicate email when creating an internal account', async () => {
     const d = deps();
-    d.prisma.user.findFirst.mockResolvedValue({ id: 99 });
+    d.tx.user.findFirst.mockResolvedValue({ id: 99 });
     await expect(
       d.service.create(
         { fullName: 'A', email: 'dup@example.com', password: 'MatKhauNoiBo!2026', role: 'STAFF' },
@@ -245,5 +260,7 @@ describe('AdminAccountsService', () => {
         { id: '1' },
       ),
     ).rejects.toBeInstanceOf(ConflictException);
+    expect(d.tx.user.create).not.toHaveBeenCalled();
+    expect(d.tx.auditLog.create).not.toHaveBeenCalled();
   });
 });
