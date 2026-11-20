@@ -107,8 +107,7 @@ export class AuthService {
       select: { id: true, userId: true, type: true, usedAt: true, revokedAt: true, expiresAt: true },
     });
     if (
-      !record ||
-      record.type !== AuthTokenType.VERIFY_EMAIL ||
+      record?.type !== AuthTokenType.VERIFY_EMAIL ||
       record.usedAt ||
       record.revokedAt ||
       record.expiresAt <= new Date()
@@ -134,11 +133,19 @@ export class AuthService {
           ),
         );
       }
-      // Tài khoản đang bị khóa không được mở khóa bằng thao tác xác thực email.
-      await tx.user.updateMany({
-        where: { id: record.userId, status: { not: UserStatus.LOCKED } },
+      // Xác thực email không đổi status; tài khoản LOCKED vẫn bị chặn đăng nhập.
+      const verified = await tx.user.updateMany({
+        where: { id: record.userId },
         data: { emailVerifiedAt: new Date() },
       });
+      if (!verified.count) {
+        throw new BadRequestException(
+          apiErrorPayload(
+            ErrorCode.BAD_REQUEST,
+            'Tài khoản không còn tồn tại để xác thực email.',
+          ),
+        );
+      }
     });
 
     return { status: 'COMPLETED', message: 'Xác thực email thành công.' };
@@ -195,6 +202,14 @@ export class AuthService {
         apiErrorPayload(
           ErrorCode.UNAUTHORIZED,
           'Thông tin đăng nhập không chính xác.',
+        ),
+      );
+    }
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException(
+        apiErrorPayload(
+          ErrorCode.FORBIDDEN,
+          'Tài khoản nội bộ không được đăng nhập khu vực khách hàng.',
         ),
       );
     }
@@ -301,10 +316,7 @@ export class AuthService {
       stored.revokedAt ||
       stored.refreshTokenHash !== this.hashToken(refreshToken)
     ) {
-      await this.prisma.authSession.updateMany({
-        where: { userId: numericUserId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
+      await this.revokeActiveSessions(numericUserId);
       throw new UnauthorizedException(
         apiErrorPayload(
           ErrorCode.UNAUTHORIZED,
@@ -331,7 +343,7 @@ export class AuthService {
       remainingTtlMs,
     );
 
-    await this.prisma.$transaction(async (tx) => {
+    const rotationSucceeded = await this.prisma.$transaction(async (tx) => {
       // Xoay tại chỗ trên cùng AuthSession: đổi hash refresh token + đánh dấu rotatedAt.
       // Điều kiện refreshTokenHash cũ bảo đảm hai request song song chỉ một bên thắng.
       const rotated = await tx.authSession.updateMany({
@@ -346,15 +358,18 @@ export class AuthService {
           rotatedAt: new Date(),
         },
       });
-      if (!rotated.count) {
-        throw new UnauthorizedException(
-          apiErrorPayload(
-            ErrorCode.UNAUTHORIZED,
-            'Phát hiện tái sử dụng token. Vui lòng đăng nhập lại.',
-          ),
-        );
-      }
+      return rotated.count > 0;
     });
+    if (!rotationSucceeded) {
+      // Thu hồi sau khi transaction hoàn tất để không bị rollback cùng lần xoay thất bại.
+      await this.revokeActiveSessions(numericUserId);
+      throw new UnauthorizedException(
+        apiErrorPayload(
+          ErrorCode.UNAUTHORIZED,
+          'Phát hiện tái sử dụng token. Vui lòng đăng nhập lại.',
+        ),
+      );
+    }
 
     return {
       accessToken,
@@ -448,8 +463,7 @@ export class AuthService {
       select: { id: true, userId: true, type: true, usedAt: true, revokedAt: true, expiresAt: true },
     });
     if (
-      !record ||
-      record.type !== AuthTokenType.RESET_PASSWORD ||
+      record?.type !== AuthTokenType.RESET_PASSWORD ||
       record.usedAt ||
       record.revokedAt ||
       record.expiresAt <= new Date()
@@ -594,6 +608,13 @@ export class AuthService {
       expiresIn: this.accessTtlSeconds(),
       account: this.toAccount(user),
     };
+  }
+
+  private async revokeActiveSessions(userId: number): Promise<void> {
+    await this.prisma.authSession.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
   }
 
   private hashPassword(password: string): Promise<string> {

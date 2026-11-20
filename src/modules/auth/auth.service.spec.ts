@@ -1,9 +1,10 @@
+/// <reference types="jest" />
+
 import { BadRequestException, ConflictException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { AuthTokenType, User, UserRole, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { AuthService } from './auth.service';
 
-// User mẫu khớp schema Leader: id Int, fullName trên bảng users, emailVerifiedAt thay cho isEmailVerified.
 const user = (overrides: Partial<User> = {}): User => ({
   id: 1,
   email: 'a@example.com',
@@ -23,7 +24,12 @@ const user = (overrides: Partial<User> = {}): User => ({
 
 function deps() {
   const tx = {
-    user: { create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), findUnique: jest.fn() },
+    user: {
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest.fn(),
+    },
     authToken: { create: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     authSession: {
       create: jest.fn().mockResolvedValue({ id: 10 }),
@@ -146,6 +152,39 @@ describe('AuthService', () => {
     );
   });
 
+  it('confirms email for a LOCKED account without changing its locked status', async () => {
+    const d = deps();
+    d.prisma.authToken.findUnique.mockResolvedValue({
+      id: 5,
+      userId: 1,
+      type: AuthTokenType.VERIFY_EMAIL,
+      usedAt: null,
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    await expect(d.service.confirmEmail('raw-token')).resolves.toMatchObject({ status: 'COMPLETED' });
+    expect(d.tx.user.updateMany).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: { emailVerifiedAt: expect.any(Date) },
+    });
+  });
+
+  it('does not consume email verification when the user no longer exists', async () => {
+    const d = deps();
+    d.prisma.authToken.findUnique.mockResolvedValue({
+      id: 5,
+      userId: 1,
+      type: AuthTokenType.VERIFY_EMAIL,
+      usedAt: null,
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    d.tx.user.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(d.service.confirmEmail('raw-token')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('rejects an expired or already used verification token', async () => {
     const d = deps();
     d.prisma.authToken.findUnique.mockResolvedValue({
@@ -203,6 +242,20 @@ describe('AuthService', () => {
     expect(tokens.account).toMatchObject({ id: '1', role: 'CUSTOMER', status: 'ACTIVE', version: 1 });
     expect(d.prisma.authSession.create).toHaveBeenCalled();
   });
+
+  it.each([UserRole.STAFF, UserRole.ADMIN])(
+    'rejects %s accounts on the customer login endpoint with 403',
+    async (role) => {
+      const d = deps();
+      const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+      d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash, role }));
+
+      await expect(
+        d.service.login({ identifier: user().email, password: 'MatKhauMinhHoa!2026' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(d.prisma.authSession.create).not.toHaveBeenCalled();
+    },
+  );
 
   // Hồi quy: rememberMe phải kéo dài CẢ AuthSession.expiresAt LẪN TTL của JWT refresh.
   // Trước fix, JWT luôn 7 ngày trong khi DB session 30 ngày -> ngày thứ 8 phiên chết sớm.
@@ -366,6 +419,30 @@ describe('AuthService', () => {
     expect(refreshSignOptions.expiresIn).toBeGreaterThan(0);
     // Và không được đẩy expiresAt của phiên ra xa hơn.
     expect(d.tx.authSession.updateMany.mock.calls[0][0].data).not.toHaveProperty('expiresAt');
+  });
+
+  it('revokes every active session when a concurrent refresh loses the rotation race', async () => {
+    const d = deps();
+    d.jwt.verify.mockReturnValue({ sub: '1', tokenId: '10', type: 'refresh' });
+    d.prisma.authSession.findUnique.mockResolvedValue({
+      id: 10,
+      userId: 1,
+      refreshTokenHash: 'hash',
+      revokedAt: null,
+      rotatedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      user: user(),
+    });
+    (d.service as unknown as { hashToken: (v: string) => string }).hashToken = jest.fn(() => 'hash');
+    d.tx.authSession.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(d.service.refreshTokens('1', 'jwt-refresh', '10')).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    expect(d.prisma.authSession.updateMany).toHaveBeenCalledWith({
+      where: { userId: 1, revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
   });
 
   it('writes a PASSWORD_RESET audit entry instead of silently changing the hash', async () => {
