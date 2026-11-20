@@ -47,6 +47,17 @@ function interceptorHost(request: Record<string, unknown>, statusCode: number) {
 }
 
 describe('Response envelope and error contract', () => {
+  it('maps an unavailable database to 503 and keeps database messages out of logs', () => {
+    const { host, json, response } = errorHost();
+    const logger = { error: jest.fn() };
+    const filter = new AllExceptionsFilter(logger as unknown as PinoLogger);
+    filter.catch(new Prisma.PrismaClientInitializationError('private connection detail', '6.19.3', 'P1001'), host);
+    expect(response.status).toHaveBeenCalledWith(503);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({ code: 'DEPENDENCY_UNAVAILABLE' }),
+    }));
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain('private connection detail');
+  });
   it('wraps success payload as { data, traceId } and echoes X-Request-ID', () => {
     const request: Record<string, unknown> = { headers: { 'x-request-id': 'req-abc-123' } };
     const { executionContext, setHeader } = interceptorHost(request, 200);
@@ -81,7 +92,7 @@ describe('Response envelope and error contract', () => {
     expect(body).toBeUndefined();
   });
 
-  it('maps validation errors to VALIDATION_ERROR with field details', () => {
+  it('maps validation errors to BAD_REQUEST with field details', () => {
     const errors: ValidationError[] = [
       { property: 'email', constraints: { isEmail: 'email must be an email' }, children: [] },
       {
@@ -102,7 +113,7 @@ describe('Response envelope and error contract', () => {
     ]);
     const exception = validationExceptionFactory(errors);
     expect(exception).toBeInstanceOf(BadRequestException);
-    expect(exception.getResponse()).toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+    expect(exception.getResponse()).toMatchObject({ code: ErrorCode.BAD_REQUEST });
   });
 
   it('hides internal error details and maps Prisma codes to contract codes', () => {
@@ -112,7 +123,7 @@ describe('Response envelope and error contract', () => {
     filter.catch(new Error('database password secret'), host);
     expect(json).toHaveBeenLastCalledWith({
       error: {
-        code: 'INTERNAL_SERVER_ERROR',
+        code: 'INTERNAL_ERROR',
         message: 'Đã xảy ra lỗi hệ thống. Vui lòng thử lại sau.',
         details: [],
       },
@@ -160,7 +171,7 @@ describe('Response envelope and error contract', () => {
   });
 
   it.each([
-    [new UnauthorizedException('no token'), 'UNAUTHORIZED'],
+    [new UnauthorizedException('no token'), 'UNAUTHENTICATED'],
     [new ForbiddenException('nope'), 'FORBIDDEN'],
     [new NotFoundException('missing'), 'NOT_FOUND'],
   ])('maps %s to the matching contract code', (exception, code) => {
@@ -172,14 +183,14 @@ describe('Response envelope and error contract', () => {
     );
   });
 
-  it('treats a raw string-array BadRequestException as VALIDATION_ERROR', () => {
+  it('treats a raw string-array BadRequestException as BAD_REQUEST', () => {
     const { host, json } = errorHost();
     const filter = new AllExceptionsFilter({ error: jest.fn() } as unknown as PinoLogger);
     filter.catch(new BadRequestException(['email must be an email', 'password too short']), host);
     expect(json).toHaveBeenLastCalledWith(
       expect.objectContaining({
         error: expect.objectContaining({
-          code: 'VALIDATION_ERROR',
+          code: 'BAD_REQUEST',
           details: [
             { field: '', message: 'email must be an email' },
             { field: '', message: 'password too short' },

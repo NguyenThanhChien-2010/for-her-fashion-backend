@@ -107,12 +107,9 @@ describe('M01 + Shared HTTP contract', () => {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       file: {
-        create: jest.fn().mockResolvedValue({
-          id: 30,
-          purpose: 'REVIEW',
-          mimeType: 'image/jpeg',
-          sizeBytes: 4,
-        }),
+        create: jest.fn(({ data }: { data: { purpose: string; mimeType: string; sizeBytes: number } }) =>
+          Promise.resolve({ id: 30, ...data }),
+        ),
       },
       idempotencyKey: {
         deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -262,7 +259,7 @@ describe('M01 + Shared HTTP contract', () => {
       .set('Authorization', `Bearer ${accessToken()}`)
       .expect(401);
 
-    expect(result.body.error.code).toBe('UNAUTHORIZED');
+    expect(result.body.error.code).toBe('UNAUTHENTICATED');
     expect(prisma.user.findUnique).not.toHaveBeenCalled();
   });
 
@@ -325,7 +322,7 @@ describe('M01 + Shared HTTP contract', () => {
     );
   });
 
-  it('PATCH /admin/accounts/:id/role reports CONFLICT on a stale version', async () => {
+  it('PATCH /admin/accounts/:id/role reports VERSION_CONFLICT on a stale version', async () => {
     currentUser = userRow({ role: UserRole.ADMIN });
     // Bản ghi đã bị người khác cập nhật lên version 5 trong khi client còn giữ version 3.
     targetUser = userRow({ id: 2, email: 'target@example.com', role: UserRole.STAFF, version: 5 });
@@ -335,12 +332,12 @@ describe('M01 + Shared HTTP contract', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ version: 3, role: 'ADMIN', reason: 'Bổ nhiệm' })
       .expect(409);
-    expect(result.body.error.code).toBe('CONFLICT');
+    expect(result.body.error.code).toBe('VERSION_CONFLICT');
   });
 
   it('POST /uploads requires a Bearer token', async () => {
     const result = await request(app.getHttpServer()).post('/api/v1/uploads').expect(401);
-    expect(result.body.error.code).toBe('UNAUTHORIZED');
+    expect(result.body.error.code).toBe('UNAUTHENTICATED');
   });
 
   it('POST /admin/accounts requires the Idempotency-Key header', async () => {
@@ -356,7 +353,7 @@ describe('M01 + Shared HTTP contract', () => {
         role: 'STAFF',
       })
       .expect(400);
-    expect(result.body.error.code).toBe('VALIDATION_ERROR');
+    expect(result.body.error.code).toBe('BAD_REQUEST');
     expect(result.body.error.details).toEqual(
       expect.arrayContaining([expect.objectContaining({ field: 'Idempotency-Key' })]),
     );
@@ -388,12 +385,14 @@ describe('M01 + Shared HTTP contract', () => {
     expect(result.body.data).toMatchObject({ id: '5', role: 'STAFF', status: 'ACTIVE', version: 1 });
   });
 
-  it('POST /uploads returns the Upload schema for a JPG file', async () => {
+  it.each([4, 5 * 1024 * 1024])('POST /uploads accepts a JPG of %i bytes', async (sizeBytes) => {
+    const file = Buffer.alloc(sizeBytes);
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0]).copy(file);
     const result = await request(app.getHttpServer())
       .post('/api/v1/uploads')
       .set('Authorization', `Bearer ${accessToken()}`)
       .field('purpose', 'REVIEW')
-      .attach('file', Buffer.from([0xff, 0xd8, 0xff, 0xe0]), {
+      .attach('file', file, {
         filename: 'review.jpg',
         contentType: 'image/jpeg',
       })
@@ -402,19 +401,19 @@ describe('M01 + Shared HTTP contract', () => {
       id: '30',
       purpose: 'REVIEW',
       mimeType: 'image/jpeg',
-      sizeBytes: 4,
+      sizeBytes,
       access: 'PRIVATE',
     });
   });
 
-  it('POST /uploads rejects a non-image payload with VALIDATION_ERROR', async () => {
+  it('POST /uploads rejects a non-image payload with BAD_REQUEST', async () => {
     const result = await request(app.getHttpServer())
       .post('/api/v1/uploads')
       .set('Authorization', `Bearer ${accessToken()}`)
       .field('purpose', 'REVIEW')
       .attach('file', Buffer.from('<svg/>'), { filename: 'x.svg', contentType: 'image/svg+xml' })
       .expect(400);
-    expect(result.body.error.code).toBe('VALIDATION_ERROR');
+    expect(result.body.error.code).toBe('BAD_REQUEST');
     expect(result.body.error.details).toEqual(
       expect.arrayContaining([expect.objectContaining({ field: 'file' })]),
     );
@@ -429,6 +428,19 @@ describe('M01 + Shared HTTP contract', () => {
         contentType: 'image/jpeg',
       })
       .expect(400);
-    expect(result.body.error.code).toBe('VALIDATION_ERROR');
+    expect(result.body.error.code).toBe('BAD_REQUEST');
+  });
+
+  it('rejects a file over 5 MiB with the contract status and field detail', async () => {
+    const result = await request(app.getHttpServer())
+      .post('/api/v1/uploads')
+      .set('Authorization', `Bearer ${accessToken()}`)
+      .field('purpose', 'REVIEW')
+      .attach('file', Buffer.alloc(5 * 1024 * 1024 + 1), 'review.jpg')
+      .expect(400);
+    expect(result.body.error).toMatchObject({
+      code: 'BAD_REQUEST',
+      details: [{ field: 'file', message: expect.any(String) }],
+    });
   });
 });

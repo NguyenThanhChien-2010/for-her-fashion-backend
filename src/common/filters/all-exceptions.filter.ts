@@ -36,7 +36,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const traceId = resolveTraceId(request);
 
     // Filter có thể chạy trước interceptor (ví dụ lỗi ở guard/pipe) nên phải tự set header.
-    if (!response.headersSent) response.setHeader('X-Request-ID', traceId);
+    if (!response.headersSent) {
+      response.setHeader('X-Request-ID', traceId);
+      if (mapped.statusCode === HttpStatus.UNAUTHORIZED) response.setHeader('WWW-Authenticate', 'Bearer');
+    }
 
     this.logger.error(
       {
@@ -44,7 +47,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         statusCode: mapped.statusCode,
         errorCode: mapped.code,
         method: request.method,
-        url: request.url,
+        path: request.path,
       },
       mapped.internalDetail,
     );
@@ -76,25 +79,31 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     if (
+      exception instanceof Prisma.PrismaClientInitializationError &&
+      exception.errorCode && ['P1001', 'P1002', 'P1017'].includes(exception.errorCode)
+    ) {
+      return this.dependencyUnavailable(exception.errorCode);
+    }
+    if (
       exception instanceof Prisma.PrismaClientValidationError ||
       exception instanceof Prisma.PrismaClientUnknownRequestError ||
       exception instanceof Prisma.PrismaClientInitializationError
     ) {
       return {
         statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
-        code: ErrorCode.INTERNAL_SERVER_ERROR,
-        message: ErrorMessage.INTERNAL_SERVER_ERROR,
+        code: ErrorCode.INTERNAL_ERROR,
+        message: ErrorMessage.INTERNAL_ERROR,
         details: [],
-        internalDetail: `Prisma initialization/validation error: ${exception.message}`,
+        internalDetail: exception.name,
       };
     }
 
     const internalDetail =
-      exception instanceof Error ? exception.message : String(exception);
+      exception instanceof Error ? exception.name : 'Unexpected exception';
     return {
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
-      code: ErrorCode.INTERNAL_SERVER_ERROR,
-      message: ErrorMessage.INTERNAL_SERVER_ERROR,
+      code: ErrorCode.INTERNAL_ERROR,
+      message: ErrorMessage.INTERNAL_ERROR,
       details: [],
       internalDetail,
     };
@@ -121,15 +130,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
         code: body.code,
         message: body.message,
         details: body.details ?? [],
-        internalDetail: `${body.code}: ${body.message}`,
+        internalDetail: body.code,
       };
     }
 
-    // PayloadTooLargeException từ multer (file > 5 MB): contract dùng VALIDATION_ERROR cho lỗi đầu vào.
-    if (statusCode === HttpStatus.PAYLOAD_TOO_LARGE) {
+    // PayloadTooLargeException từ multer (file > 5 MB): contract dùng BAD_REQUEST cho lỗi đầu vào.
+    if (statusCode === HttpStatus.PAYLOAD_TOO_LARGE && exception.message === 'File too large') {
       return {
-        statusCode,
-        code: ErrorCode.VALIDATION_ERROR,
+        statusCode: HttpStatus.BAD_REQUEST,
+        code: ErrorCode.BAD_REQUEST,
         message: 'Tệp tải lên vượt quá dung lượng cho phép.',
         details: [{ field: 'file', message: 'Tệp tối đa 5 MB.' }],
         internalDetail: `${exception.name}: ${exception.message}`,
@@ -142,16 +151,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (Array.isArray(rawMessage)) {
       return {
         statusCode,
-        code: ErrorCode.VALIDATION_ERROR,
-        message: ErrorMessage.VALIDATION_ERROR,
+        code: ErrorCode.BAD_REQUEST,
+        message: ErrorMessage.BAD_REQUEST,
         details: rawMessage
           .filter((item): item is string => typeof item === 'string')
           .map((message) => ({ field: '', message })),
-        internalDetail: `Validation failed: ${rawMessage.join('; ')}`,
+        internalDetail: 'Validation failed',
       };
     }
 
-    const detail = typeof rawMessage === 'string' ? rawMessage : exception.message;
     const mapped = this.mapStatus(statusCode);
     return {
       statusCode,
@@ -159,12 +167,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
       // Client nhận thông báo thân thiện; message gốc chỉ vào log để debug.
       message: mapped.message,
       details: [],
-      internalDetail: `${exception.name}: ${detail}`,
+      internalDetail: exception.name,
     };
   }
 
   private mapStatus(statusCode: number): { code: string; message: string } {
     switch (statusCode) {
+      case HttpStatus.SERVICE_UNAVAILABLE:
+        return { code: ErrorCode.DEPENDENCY_UNAVAILABLE, message: ErrorMessage.DEPENDENCY_UNAVAILABLE };
       case HttpStatus.BAD_REQUEST:
         return {
           code: ErrorCode.BAD_REQUEST,
@@ -172,8 +182,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
         };
       case HttpStatus.UNAUTHORIZED:
         return {
-          code: ErrorCode.UNAUTHORIZED,
-          message: ErrorMessage.UNAUTHORIZED,
+          code: ErrorCode.UNAUTHENTICATED,
+          message: ErrorMessage.UNAUTHENTICATED,
         };
       case HttpStatus.FORBIDDEN:
         return {
@@ -193,7 +203,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         };
       case HttpStatus.PAYLOAD_TOO_LARGE:
         return {
-          code: ErrorCode.VALIDATION_ERROR,
+          code: ErrorCode.BAD_REQUEST,
           message: 'Tệp tải lên vượt quá dung lượng cho phép.',
         };
       case HttpStatus.UNPROCESSABLE_ENTITY:
@@ -209,8 +219,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
       default:
         return statusCode >= HttpStatus.INTERNAL_SERVER_ERROR
           ? {
-              code: ErrorCode.INTERNAL_SERVER_ERROR,
-              message: ErrorMessage.INTERNAL_SERVER_ERROR,
+              code: ErrorCode.INTERNAL_ERROR,
+              message: ErrorMessage.INTERNAL_ERROR,
             }
           : {
               code: ErrorCode.BAD_REQUEST,
@@ -226,8 +236,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
     details: FieldErrorDetail[];
     internalDetail: string;
   } {
-    const internalDetail = `Prisma ${exception.code}: ${exception.message}`;
+    const internalDetail = `Prisma ${exception.code}`;
     switch (exception.code) {
+      case 'P1001':
+      case 'P1002':
+      case 'P1017':
+      case 'P2024':
+        return this.dependencyUnavailable(exception.code);
       case 'P2002':
         return {
           statusCode: HttpStatus.CONFLICT,
@@ -263,12 +278,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
       default:
         return {
           statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
-          code: ErrorCode.INTERNAL_SERVER_ERROR,
-          message: ErrorMessage.INTERNAL_SERVER_ERROR,
+          code: ErrorCode.INTERNAL_ERROR,
+          message: ErrorMessage.INTERNAL_ERROR,
           details: [],
           internalDetail,
         };
     }
+  }
+
+  private dependencyUnavailable(internalDetail: string) {
+    return {
+      statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+      code: ErrorCode.DEPENDENCY_UNAVAILABLE,
+      message: ErrorMessage.DEPENDENCY_UNAVAILABLE,
+      details: [],
+      internalDetail,
+    };
   }
 
   // P2002 meta.target cho biết field trùng; chỉ trả tên field, không trả giá trị để tránh lộ dữ liệu.

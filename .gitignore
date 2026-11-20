@@ -26,3 +26,11 @@ build/
 coverage/
 *.tsbuildinfo
 generated/
+/uploads/
+
+# Local agent workspace
+.agent/
+AGENTS.md
+GEMINI.md
+PROJECT_STATUS.md
+SESSION_LOG.md

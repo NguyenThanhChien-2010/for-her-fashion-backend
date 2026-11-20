@@ -71,10 +71,10 @@ describe('FileUploadService', () => {
     },
   );
 
-  it('returns a VALIDATION_ERROR code with a file detail', async () => {
+  it('returns a BAD_REQUEST code with a file detail', async () => {
     await expect(service.validateAndSave(file(Buffer.from('<svg/>')))).rejects.toMatchObject({
       response: expect.objectContaining({
-        code: 'VALIDATION_ERROR',
+        code: 'BAD_REQUEST',
         details: [expect.objectContaining({ field: 'file' })],
       }),
     });

@@ -30,7 +30,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       throw error ??
         new UnauthorizedException(
           apiErrorPayload(
-            ErrorCode.UNAUTHORIZED,
+            ErrorCode.UNAUTHENTICATED,
             'Phiên đăng nhập không hợp lệ hoặc đã hết hiệu lực.',
           ),
         );

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   HttpCode,
   HttpStatus,
   Post,
@@ -10,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { apiErrorPayload, ErrorCode } from '../../common/errors/api-error';
@@ -45,6 +47,7 @@ export class UploadsController {
   )
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
+    operationId: 'shared_post_uploads',
     summary: 'Tải một tệp để liên kết nghiệp vụ',
     description:
       'Hạ tầng tệp dùng chung, không bổ sung module nghiệp vụ. JPG/PNG tối đa 5 MB. Kiểm tra nội dung thật, sở hữu tệp và không công khai dữ liệu riêng tư.',
@@ -64,15 +67,22 @@ export class UploadsController {
     },
   })
   @ApiSuccessResponse(201, UploadDto)
-  @ApiErrorResponses(400, 401, 403, 413, 422, 429, 500)
+  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500, 503)
   async upload(
     @Body() dto: UploadPurposeDto,
     @UploadedFile() file: Express.Multer.File | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<UploadDto> {
+    // Match the write permissions of ProductCreate/ProductPatch and ManualRefundEvidence/Reconciliation.
+    if (
+      (dto.purpose === 'PRODUCT' && user.role === UserRole.CUSTOMER) ||
+      (dto.purpose === 'REFUND_EVIDENCE' && user.role !== UserRole.ADMIN)
+    ) {
+      throw new ForbiddenException(apiErrorPayload(ErrorCode.FORBIDDEN));
+    }
     if (!file) {
       throw new BadRequestException(
-        apiErrorPayload(ErrorCode.VALIDATION_ERROR, 'Dữ liệu đầu vào không hợp lệ.', [
+        apiErrorPayload(ErrorCode.BAD_REQUEST, 'Dữ liệu đầu vào không hợp lệ.', [
           { field: 'file', message: 'Vui lòng chọn một tệp để tải lên.' },
         ]),
       );

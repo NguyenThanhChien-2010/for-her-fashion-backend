@@ -37,12 +37,13 @@ export class AdminAccountsController {
   @Get()
   @Roles(UserRole.ADMIN, UserRole.STAFF)
   @ApiOperation({
+    operationId: 'm01_get_admin_accounts',
     summary: 'Tra cứu tài khoản theo phạm vi quyền',
     description:
       'Staff chỉ xem CUSTOMER. Yêu cầu role nội bộ từ Staff trả 403; backend luôn áp phạm vi.',
   })
   @ApiSuccessResponse(200, PaginatedAccountsDto)
-  @ApiErrorResponses(400, 401, 403, 422, 429, 500)
+  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500, 503)
   list(@Query() query: AccountQueryDto, @CurrentUser() user: AuthenticatedUser) {
     return this.adminAccounts.list(query, { id: String(user.id), role: user.role });
   }
@@ -58,12 +59,13 @@ export class AdminAccountsController {
     schema: { type: 'string', minLength: 16, maxLength: 128 },
   })
   @ApiOperation({
+    operationId: 'm01_post_admin_accounts',
     summary: 'Tạo tài khoản nội bộ',
     description:
       'Admin tạo tài khoản STAFF/ADMIN; tài khoản dùng được ngay, không qua xác thực email.',
   })
   @ApiSuccessResponse(201, AccountDto)
-  @ApiErrorResponses(400, 401, 403, 409, 422, 429, 500)
+  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500, 503)
   create(
     @Body() dto: InternalAccountCreateDto,
     @IdempotencyKey() idempotencyKey: string,
@@ -75,12 +77,13 @@ export class AdminAccountsController {
   @Get(':accountId')
   @Roles(UserRole.ADMIN, UserRole.STAFF)
   @ApiOperation({
+    operationId: 'm01_get_admin_accounts_accountId',
     summary: 'Xem tài khoản được phép',
     description: 'Staff chỉ xem khách hàng; không trả mật khẩu/token.',
   })
   @ApiParam({ name: 'accountId', description: 'ID nội bộ dạng chuỗi số.', example: '123' })
   @ApiSuccessResponse(200, AccountDto)
-  @ApiErrorResponses(400, 401, 403, 404, 429, 500)
+  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500, 503)
   findOne(@Param('accountId') accountId: string, @CurrentUser() user: AuthenticatedUser) {
     if (!/^[1-9]\d*$/.test(accountId)) {
       throw new BadRequestException('ID tài khoản không đúng định dạng.');
@@ -92,13 +95,14 @@ export class AdminAccountsController {
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
+    operationId: 'm01_patch_admin_accounts_accountId_role',
     summary: 'Phân vai trò nội bộ',
     description:
       'Chỉ tài khoản nội bộ; không nâng CUSTOMER thành nội bộ bằng endpoint này. version bắt buộc để chống ghi đè.',
   })
   @ApiParam({ name: 'accountId', description: 'ID nội bộ dạng chuỗi số.', example: '123' })
   @ApiSuccessResponse(200, AccountDto)
-  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500)
+  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500, 503)
   updateRole(
     @Param('accountId') accountId: string,
     @Body() dto: AccountRoleUpdateDto,
@@ -114,13 +118,14 @@ export class AdminAccountsController {
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
+    operationId: 'm01_patch_admin_accounts_accountId_status',
     summary: 'Khóa hoặc mở tài khoản',
     description:
       'Khóa (LOCKED) thu hồi toàn bộ phiên và chặn API; mở không khôi phục phiên đã thu hồi. Giữ nguyên lịch sử đơn.',
   })
   @ApiParam({ name: 'accountId', description: 'ID nội bộ dạng chuỗi số.', example: '123' })
   @ApiSuccessResponse(200, AccountDto)
-  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500)
+  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500, 503)
   updateStatus(
     @Param('accountId') accountId: string,
     @Body() dto: AccountStatusUpdateDto,

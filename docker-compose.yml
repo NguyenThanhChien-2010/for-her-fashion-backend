@@ -26,6 +26,15 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/' + (process.env.API_PREFIX || 'api/v1')).then(response => { process.exitCode = response.ok ? 0 : 1 }).catch(() => { process.exitCode = 1 })"
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
 volumes:
   mysql_data:

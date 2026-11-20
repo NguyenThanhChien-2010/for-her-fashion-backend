@@ -247,7 +247,9 @@ describe('AdminAccountsService', () => {
       'idempotency-key-123456',
       'admin.accounts.create',
       expect.any(Function),
+      expect.any(String),
     );
+    expect(d.tx.auditLog.create).toHaveBeenCalledTimes(1);
   });
 
   it('rejects duplicate email when creating an internal account', async () => {

@@ -8,9 +8,9 @@ import {
 import { PinoLogger } from 'nestjs-pino';
 import { Prisma, User, UserRole, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
-import { PrismaService } from '../../modules/prisma/prisma.service';
 import type { PrismaTransactionClient } from '../../common/database/prisma.service';
-import { apiErrorPayload, ErrorCode, ErrorMessage } from '../../common/errors/api-error';
+import { PrismaService } from '../../modules/prisma/prisma.service';
+import { apiErrorPayload, ErrorCode } from '../../common/errors/api-error';
 import { IdempotencyService } from '../../common/services/idempotency.service';
 import { AuthService } from './auth.service';
 import {
@@ -120,17 +120,22 @@ export class AdminAccountsService {
     idempotencyKey: string,
     requester: { id: string },
   ): Promise<AccountResponse> {
-    const account = (await this.idempotency.execute(
+    const account = await this.idempotency.execute(
       requester.id,
       idempotencyKey,
       'admin.accounts.create',
       async (tx) => ({
         statusCode: 201,
-        // Bản ghi idempotency lưu JSON thuần, không phải class instance.
-        data: (await this.createAccount(tx, dto, requester.id)) as unknown as Prisma.JsonObject,
+        data: { ...(await this.createAccount(tx, dto, requester.id)) },
       }),
-    )) as unknown as AccountResponse;
-
+      JSON.stringify([
+        dto.fullName.trim(),
+        dto.email.trim().toLowerCase(),
+        dto.phone?.trim() ?? null,
+        dto.role,
+        dto.password,
+      ]),
+    );
     this.logger.info({ accountId: account.id }, 'Internal account create request completed');
     return account;
   }
@@ -217,7 +222,13 @@ export class AdminAccountsService {
         role: dto.role === 'ADMIN' ? UserRole.ADMIN : UserRole.STAFF,
         version: { increment: 1 },
       },
-      { action: 'ROLE_UPDATE', reason: dto.reason, actorId: requester.id },
+      {
+        action: 'ROLE_UPDATE',
+        reason: dto.reason,
+        actorId: requester.id,
+        before: { role: current.role },
+        after: { role: dto.role },
+      },
     );
     return this.reload(numericId);
   }
@@ -234,6 +245,13 @@ export class AdminAccountsService {
     this.assertVersion(current.version, dto.version);
 
     const nextStatus = toDatabaseStatus(dto.status);
+    if (nextStatus === UserStatus.LOCKED && Array.from(dto.reason).length > 255) {
+      throw new BadRequestException(
+        apiErrorPayload(ErrorCode.BAD_REQUEST, 'Dữ liệu đầu vào không hợp lệ.', [
+          { field: 'reason', message: 'Lý do khóa tài khoản tối đa 255 ký tự.' },
+        ]),
+      );
+    }
     await this.applyUserUpdate(
       numericId,
       dto.version,
@@ -244,7 +262,13 @@ export class AdminAccountsService {
           ? { lockedReason: dto.reason }
           : { lockedReason: null }),
       },
-      { action: 'STATUS_UPDATE', reason: dto.reason, actorId: requester.id },
+      {
+        action: 'STATUS_UPDATE',
+        reason: dto.reason,
+        actorId: requester.id,
+        before: { status: current.status },
+        after: { status: dto.status },
+      },
       nextStatus === UserStatus.LOCKED,
     );
     return this.reload(numericId);
@@ -255,7 +279,13 @@ export class AdminAccountsService {
     accountId: number,
     version: number,
     data: Prisma.UserUpdateManyMutationInput,
-    audit: { action: string; reason: string; actorId: string },
+    audit: {
+      action: string;
+      reason: string;
+      actorId: string;
+      before: Prisma.InputJsonObject;
+      after: Prisma.InputJsonObject;
+    },
     revokeSessions = false,
   ): Promise<void> {
     const actorId = parseContractId(audit.actorId);
@@ -267,7 +297,7 @@ export class AdminAccountsService {
       // count = 0 nghĩa là version đã bị request khác thay đổi giữa lúc đọc và ghi.
       if (!result.count) {
         throw new ConflictException(
-          apiErrorPayload(ErrorCode.CONFLICT, ErrorMessage.CONFLICT_STATE),
+          apiErrorPayload(ErrorCode.VERSION_CONFLICT),
         );
       }
       if (revokeSessions) {
@@ -281,18 +311,14 @@ export class AdminAccountsService {
         actorId,
         action: audit.action,
         entityId: String(accountId),
-        after: { reason: audit.reason },
+        before: audit.before,
+        after: { ...audit.after, reason: audit.reason },
       });
-      this.logger.info(
-        {
-          action: audit.action,
-          accountId,
-          actorId: audit.actorId,
-          reason: audit.reason,
-        },
-        'Account administration update',
-      );
     });
+    this.logger.info(
+      { action: audit.action, accountId, actorId: audit.actorId },
+      'Account administration update',
+    );
   }
 
   private createUserAuditLog(
@@ -301,6 +327,7 @@ export class AdminAccountsService {
       actorId: number | null;
       action: string;
       entityId: string;
+      before?: Prisma.InputJsonObject;
       after: Prisma.InputJsonObject;
     },
   ) {
@@ -310,6 +337,7 @@ export class AdminAccountsService {
         action: audit.action,
         entityType: 'User',
         entityId: audit.entityId,
+        ...(audit.before ? { before: audit.before } : {}),
         after: audit.after,
       },
     });
@@ -343,7 +371,7 @@ export class AdminAccountsService {
   private assertVersion(current: number, requested: number): void {
     if (current !== requested) {
       throw new ConflictException(
-        apiErrorPayload(ErrorCode.CONFLICT, ErrorMessage.CONFLICT_STATE),
+        apiErrorPayload(ErrorCode.VERSION_CONFLICT),
       );
     }
   }

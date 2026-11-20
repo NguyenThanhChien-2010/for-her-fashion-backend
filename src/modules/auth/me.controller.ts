@@ -18,11 +18,12 @@ export class MeController {
 
   @Get()
   @ApiOperation({
+    operationId: 'm01_get_me',
     summary: 'Xem tài khoản hiện tại',
     description: 'Trả Account của người dùng đang đăng nhập theo đúng schema contract.',
   })
   @ApiSuccessResponse(200, AccountDto)
-  @ApiErrorResponses(401, 403, 429, 500)
+  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500, 503)
   getMe(@CurrentUser() user: AuthenticatedUser) {
     return this.authService.getAccount(String(user.id));
   }

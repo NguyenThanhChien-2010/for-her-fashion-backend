@@ -3,8 +3,12 @@
 import { BadRequestException, ConflictException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { AuthTokenType, User, UserRole, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
+import { randomUUID } from 'node:crypto';
 import { AuthService } from './auth.service';
 
+const LOGIN_FIXTURE = `Aa9!${randomUUID()}`;
+
+// User mẫu khớp schema Leader: id Int, fullName trên bảng users, emailVerifiedAt thay cho isEmailVerified.
 const user = (overrides: Partial<User> = {}): User => ({
   id: 1,
   email: 'a@example.com',
@@ -72,7 +76,7 @@ function deps() {
       create: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      findUnique: jest.fn(),
+      findUnique: jest.fn().mockResolvedValue({ id: 1 }),
     },
     authToken: { create: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     authSession: {
@@ -119,7 +123,7 @@ function deps() {
     }),
     getOrThrow: jest.fn(() => 'test-secret-value-32-chars-minimum-x'),
   };
-  const events = { emit: jest.fn() };
+  const events = { emitAsync: jest.fn().mockResolvedValue([]) };
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
   return {
     prisma,
@@ -174,7 +178,7 @@ describe('AuthService', () => {
         data: expect.objectContaining({ type: AuthTokenType.VERIFY_EMAIL, userId: 2 }),
       }),
     );
-    expect(d.events.emit).toHaveBeenCalledWith('auth.email_verification', expect.objectContaining({ userId: 2 }));
+    expect(d.events.emitAsync).toHaveBeenCalledWith('auth.email_verification', expect.objectContaining({ userId: 2 }));
   });
 
   it('confirms email by setting emailVerifiedAt and consuming the token', async () => {
@@ -218,29 +222,29 @@ describe('AuthService', () => {
 
   it('returns 403 for an unverified login', async () => {
     const d = deps();
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(
       user({ passwordHash: hash, emailVerifiedAt: null }),
     );
     await expect(
-      d.service.login({ identifier: user().email, password: 'MatKhauMinhHoa!2026' }),
+      d.service.login({ identifier: user().email, password: LOGIN_FIXTURE }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('blocks a LOCKED account at login', async () => {
     const d = deps();
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(
       user({ passwordHash: hash, status: UserStatus.LOCKED }),
     );
     await expect(
-      d.service.login({ identifier: user().email, password: 'MatKhauMinhHoa!2026' }),
+      d.service.login({ identifier: user().email, password: LOGIN_FIXTURE }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('rejects a wrong password with 401 UNAUTHORIZED', async () => {
+  it('rejects a wrong password with 401 UNAUTHENTICATED', async () => {
     const d = deps();
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash }));
     await expect(
       d.service.login({ identifier: user().email, password: 'WrongPassword!1' }),
@@ -249,46 +253,57 @@ describe('AuthService', () => {
 
   it('issues Bearer tokens with account payload and creates an AuthSession', async () => {
     const d = deps();
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash }));
     const tokens = await d.service.login({
       identifier: user().email,
-      password: 'MatKhauMinhHoa!2026',
+      password: LOGIN_FIXTURE,
       rememberMe: true,
     });
     expect(tokens).toMatchObject({ tokenType: 'Bearer', expiresIn: 900 });
     expect(tokens.account).toMatchObject({ id: '1', role: 'CUSTOMER', status: 'ACTIVE', version: 1 });
-    expect(d.prisma.authSession.create).toHaveBeenCalled();
+    expect(d.tx.authSession.create).toHaveBeenCalled();
   });
 
   it.each([UserRole.STAFF, UserRole.ADMIN])(
     'rejects %s accounts on the customer login endpoint with 403',
     async (role) => {
       const d = deps();
-      const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+      const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
       d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash, role }));
 
       await expect(
-        d.service.login({ identifier: user().email, password: 'MatKhauMinhHoa!2026' }),
+        d.service.login({ identifier: user().email, password: LOGIN_FIXTURE }),
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(d.prisma.authSession.create).not.toHaveBeenCalled();
+      expect(d.tx.authSession.create).not.toHaveBeenCalled();
     },
   );
 
   // Hồi quy: rememberMe phải kéo dài CẢ AuthSession.expiresAt LẪN TTL của JWT refresh.
   // Trước fix, JWT luôn 7 ngày trong khi DB session 30 ngày -> ngày thứ 8 phiên chết sớm.
+  it('aborts issuance when password reset or account lock changed the account version', async () => {
+    const d = deps();
+    const hash = await argon2.hash(LOGIN_FIXTURE);
+    d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash }));
+    d.tx.user.findUnique.mockResolvedValue(null);
+    await expect(d.service.login({ identifier: user().email, password: LOGIN_FIXTURE }))
+      .rejects.toBeInstanceOf(UnauthorizedException);
+    expect(d.tx.authSession.update).not.toHaveBeenCalled();
+    expect(d.jwt.sign).not.toHaveBeenCalled();
+  });
+
   it('applies rememberMe to both the session expiry and the refresh JWT TTL', async () => {
     const d = deps();
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash }));
     const before = Date.now();
     await d.service.login({
       identifier: user().email,
-      password: 'MatKhauMinhHoa!2026',
+      password: LOGIN_FIXTURE,
       rememberMe: true,
     });
 
-    const sessionExpiry = d.prisma.authSession.create.mock.calls[0][0].data.expiresAt as Date;
+    const sessionExpiry = d.tx.authSession.create.mock.calls[0][0].data.expiresAt as Date;
     // 30 ngày cho rememberMe (cho phép sai số 5 giây khi test chạy).
     expect(sessionExpiry.getTime() - before).toBeGreaterThan(30 * 86_400_000 - 5_000);
 
@@ -298,19 +313,19 @@ describe('AuthService', () => {
 
   it('keeps the 7-day refresh TTL when rememberMe is absent', async () => {
     const d = deps();
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash }));
-    await d.service.login({ identifier: user().email, password: 'MatKhauMinhHoa!2026' });
+    await d.service.login({ identifier: user().email, password: LOGIN_FIXTURE });
     const refreshSignOptions = d.jwt.sign.mock.calls.at(-1)?.[1] as { expiresIn: number };
     expect(refreshSignOptions.expiresIn).toBe(7 * 86_400);
   });
 
   it('writes a LOGIN audit entry with the actor and IP', async () => {
     const d = deps();
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash }));
     await d.service.login(
-      { identifier: user().email, password: 'MatKhauMinhHoa!2026' },
+      { identifier: user().email, password: LOGIN_FIXTURE },
       'jest-agent',
       '127.0.0.1',
     );
@@ -323,38 +338,38 @@ describe('AuthService', () => {
 
   it('does not fail the login when the audit table is unavailable', async () => {
     const d = deps();
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash }));
     // Audit là quan sát: lỗi ghi audit không được làm hỏng phiên đăng nhập đã tạo.
     d.prisma.auditLog.create.mockRejectedValueOnce(new Error('audit table down'));
     await expect(
-      d.service.login({ identifier: user().email, password: 'MatKhauMinhHoa!2026' }),
+      d.service.login({ identifier: user().email, password: LOGIN_FIXTURE }),
     ).resolves.toMatchObject({ tokenType: 'Bearer' });
   });
 
   it('rejects CUSTOMER accounts on the admin login endpoint with 403', async () => {
     const d = deps();
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash }));
     await expect(
-      d.service.adminLogin({ identifier: user().email, password: 'MatKhauMinhHoa!2026' }),
+      d.service.adminLogin({ identifier: user().email, password: LOGIN_FIXTURE }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('allows STAFF accounts on the admin login endpoint', async () => {
     const d = deps();
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash, role: UserRole.STAFF }));
     await expect(
-      d.service.adminLogin({ identifier: user().email, password: 'MatKhauMinhHoa!2026' }),
+      d.service.adminLogin({ identifier: user().email, password: LOGIN_FIXTURE }),
     ).resolves.toMatchObject({ tokenType: 'Bearer' });
   });
 
   it('looks the account up by phone when identifier is not an email', async () => {
     const d = deps();
-    const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
+    const hash = await argon2.hash(LOGIN_FIXTURE, { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash }));
-    await d.service.login({ identifier: '0901234567', password: 'MatKhauMinhHoa!2026' });
+    await d.service.login({ identifier: '0901234567', password: LOGIN_FIXTURE });
     expect(d.prisma.user.findUnique).toHaveBeenCalledWith({ where: { phone: '0901234567' } });
   });
 
@@ -436,6 +451,21 @@ describe('AuthService', () => {
     });
   });
 
+  it('does not revoke other sessions if the session closed during refresh rotation', async () => {
+    const d = deps();
+    d.jwt.verify.mockReturnValue({ sub: '1', tokenId: '10', type: 'refresh' });
+    d.prisma.authSession.findUnique
+      .mockResolvedValueOnce(authSessionRecord())
+      .mockResolvedValueOnce(authSessionRecord({ revokedAt: new Date() }));
+    (d.service as unknown as { hashToken: (value: string) => string }).hashToken = jest.fn(() => 'hash');
+    d.tx.authSession.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(d.service.refreshTokens('1', 'jwt-refresh', '10')).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    expect(d.prisma.authSession.updateMany).not.toHaveBeenCalled();
+  });
+
   it('writes a PASSWORD_RESET audit entry instead of silently changing the hash', async () => {
     const d = deps();
     d.prisma.authToken.findUnique.mockResolvedValue(
@@ -467,7 +497,7 @@ describe('AuthService', () => {
     const d = deps();
     d.jwt.verify.mockReturnValue({ sub: '1', tokenId: '10', type: 'refresh' });
     d.prisma.authSession.findUnique.mockResolvedValue(
-      authSessionRecord({ refreshTokenHash: 'different', revokedAt: new Date() }),
+      authSessionRecord({ refreshTokenHash: 'different' }),
     );
     await expect(d.service.refreshTokens('1', 'jwt-refresh', '10')).rejects.toBeInstanceOf(
       UnauthorizedException,
@@ -523,7 +553,7 @@ describe('AuthService', () => {
         data: expect.objectContaining({ type: AuthTokenType.VERIFY_EMAIL, userId: 1 }),
       }),
     );
-    expect(d.events.emit).toHaveBeenCalledWith(
+    expect(d.events.emitAsync).toHaveBeenCalledWith(
       'auth.email_verification',
       expect.objectContaining({ userId: 1 }),
     );
@@ -539,7 +569,7 @@ describe('AuthService', () => {
       message: 'Yêu cầu gửi lại email xác thực đã được ghi nhận.',
     });
     expect(d.tx.authToken.create).not.toHaveBeenCalled();
-    expect(d.events.emit).not.toHaveBeenCalled();
+    expect(d.events.emitAsync).not.toHaveBeenCalled();
   });
 
   it('answers ACCEPTED but skips token issuance on resend for a LOCKED account', async () => {
@@ -569,9 +599,21 @@ describe('AuthService', () => {
         data: expect.objectContaining({ type: AuthTokenType.RESET_PASSWORD, userId: 1 }),
       }),
     );
-    expect(d.events.emit).toHaveBeenCalledWith(
+    expect(d.events.emitAsync).toHaveBeenCalledWith(
       'auth.password_reset',
       expect.objectContaining({ userId: 1 }),
+    );
+  });
+
+  it('preserves the accepted response when the mail consumer rejects asynchronously', async () => {
+    const d = deps();
+    d.prisma.user.findUnique.mockResolvedValue(user());
+    d.events.emitAsync.mockRejectedValue(new Error('private transport details'));
+    await expect(d.service.forgotPassword({ email: user().email })).resolves.toMatchObject({
+      status: 'ACCEPTED',
+    });
+    expect(d.logger.warn).toHaveBeenCalledWith(
+      { event: 'auth.password_reset', userId: 1 }, 'Auth mail consumer failed',
     );
   });
 

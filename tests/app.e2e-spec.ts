@@ -71,17 +71,17 @@ describe('Application and Auth HTTP contracts', () => {
   it('rejects GET /me without a Bearer token', async () => {
     const result = await request(app.getHttpServer()).get('/api/v1/me').expect(401);
     expect(result.body).toMatchObject({
-      error: { code: 'UNAUTHORIZED', details: [] },
+      error: { code: 'UNAUTHENTICATED', details: [] },
       traceId: expect.any(String),
     });
   });
 
-  it('rejects invalid registration with VALIDATION_ERROR and field details', async () => {
+  it('rejects invalid registration with BAD_REQUEST and field details', async () => {
     const result = await request(app.getHttpServer())
       .post('/api/v1/auth/register')
       .send({ email: 'invalid', password: 'weak', fullName: 'A', phone: 'abc' })
       .expect(400);
-    expect(result.body.error.code).toBe('VALIDATION_ERROR');
+    expect(result.body.error.code).toBe('BAD_REQUEST');
     expect(result.body.error.details).toEqual(
       expect.arrayContaining([expect.objectContaining({ field: 'email' })]),
     );
@@ -106,7 +106,7 @@ describe('Application and Auth HTTP contracts', () => {
       .post('/api/v1/auth/refresh')
       .send({ refreshToken: 'forged-token' })
       .expect(401);
-    expect(result.body.error.code).toBe('UNAUTHORIZED');
+    expect(result.body.error.code).toBe('UNAUTHENTICATED');
   });
 
   it('keeps the legacy password-reset path out of the contract', async () => {

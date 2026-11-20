@@ -17,7 +17,7 @@ export function readIdempotencyKey(request: Request): string {
   const value = Array.isArray(header) ? header[0] : header;
   if (typeof value !== 'string' || value.length < IDEMPOTENCY_KEY_MIN_LENGTH || value.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
     throw new BadRequestException(
-      apiErrorPayload(ErrorCode.VALIDATION_ERROR, 'Dữ liệu đầu vào không hợp lệ.', [
+      apiErrorPayload(ErrorCode.BAD_REQUEST, 'Dữ liệu đầu vào không hợp lệ.', [
         {
           field: 'Idempotency-Key',
           message: `Header Idempotency-Key là bắt buộc, dài từ ${IDEMPOTENCY_KEY_MIN_LENGTH} đến ${IDEMPOTENCY_KEY_MAX_LENGTH} ký tự.`,

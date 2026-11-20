@@ -1,4 +1,6 @@
 import { ConflictException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createHmac, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService, PrismaTransactionClient } from '../database/prisma.service';
 import { IdempotencyService } from './idempotency.service';
@@ -19,7 +21,12 @@ describe('IdempotencyService', () => {
     idempotencyKey: { findUnique: jest.fn() },
   };
   let service: IdempotencyService;
+  const secret = randomUUID();
+  const request = JSON.stringify({ intent: 'create' });
   const cached = () => ({
+    requestHash: createHmac('sha256', secret)
+      .update(JSON.stringify(['idempotency/v1', 's', 'scope', 'k', request]))
+      .digest('hex'),
     response: { id: 'order' },
     state: 'COMPLETED',
     expiresAt: new Date(Date.now() + 60_000),
@@ -32,14 +39,17 @@ describe('IdempotencyService', () => {
     db.$transaction.mockImplementation(
       (fn: (client: PrismaTransactionClient) => Promise<unknown>) => fn(tx),
     );
-    service = new IdempotencyService(db as unknown as PrismaService);
+    service = new IdempotencyService(
+      db as unknown as PrismaService,
+      new ConfigService({ IDEMPOTENCY_SECRET: secret }),
+    );
   });
 
   it('claims before callback, shares tx and stores response/state with 24h expiry', async () => {
     const start = Date.now();
     const fn = jest.fn(async () => ({ statusCode: 201, data: { id: 'order' } }));
     await expect(
-      service.execute('subject', 'key', 'admin.accounts.create', fn),
+      service.execute('subject', 'key', 'admin.accounts.create', fn, request),
     ).resolves.toEqual({ id: 'order' });
 
     const claim = rows.create.mock.calls[0][0].data;
@@ -48,6 +58,7 @@ describe('IdempotencyService', () => {
       scope: 'admin.accounts.create',
       key: 'key',
       state: 'PROCESSING',
+      requestHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(claim.expiresAt.getTime()).toBeGreaterThanOrEqual(start + 86_400_000);
     expect(claim.expiresAt.getTime()).toBeLessThanOrEqual(Date.now() + 86_400_000);
@@ -65,14 +76,23 @@ describe('IdempotencyService', () => {
   it('returns cached data for a COMPLETED claim without invoking the callback', async () => {
     rows.findUnique.mockResolvedValue(cached());
     const fn = jest.fn();
-    await expect(service.execute('s', 'k', 'scope', fn)).resolves.toEqual({ id: 'order' });
+    await expect(service.execute('s', 'k', 'scope', fn, request)).resolves.toEqual({ id: 'order' });
     expect(fn).not.toHaveBeenCalled();
     expect(rows.create).not.toHaveBeenCalled();
   });
 
+  it('rejects replay with a different fingerprint before invoking the callback', async () => {
+    rows.findUnique.mockResolvedValue({ ...cached(), requestHash: '0'.repeat(64) });
+    const fn = jest.fn();
+    await expect(
+      service.execute('s', 'k', 'scope', fn, request),
+    ).rejects.toMatchObject({ response: { code: 'IDEMPOTENCY_KEY_REUSED' } });
+    expect(fn).not.toHaveBeenCalled();
+  });
+
   it('rejects a claim still PROCESSING as a conflict', async () => {
-    rows.findUnique.mockResolvedValue({ state: 'PROCESSING', expiresAt: new Date(Date.now() + 60_000) });
-    await expect(service.execute('s', 'k', 'scope', jest.fn())).rejects.toBeInstanceOf(
+    rows.findUnique.mockResolvedValue({ ...cached(), state: 'PROCESSING' });
+    await expect(service.execute('s', 'k', 'scope', jest.fn(), request)).rejects.toBeInstanceOf(
       ConflictException,
     );
   });
@@ -81,21 +101,21 @@ describe('IdempotencyService', () => {
     rows.create.mockRejectedValue(dbError('P2002'));
     db.idempotencyKey.findUnique.mockResolvedValue(cached());
     const fn = jest.fn();
-    await expect(service.execute('s', 'k', 'scope', fn)).resolves.toEqual({ id: 'order' });
+    await expect(service.execute('s', 'k', 'scope', fn, request)).resolves.toEqual({ id: 'order' });
     expect(fn).not.toHaveBeenCalled();
   });
 
   it('maps a duplicate claim with no winner to a retryable conflict', async () => {
     rows.create.mockRejectedValue(dbError('P2002'));
     db.idempotencyKey.findUnique.mockResolvedValue(null);
-    await expect(service.execute('s', 'k', 'scope', jest.fn())).rejects.toBeInstanceOf(
+    await expect(service.execute('s', 'k', 'scope', jest.fn(), request)).rejects.toBeInstanceOf(
       ConflictException,
     );
   });
 
   it('maps a write conflict (P2034) to a retryable conflict', async () => {
     db.$transaction.mockRejectedValue(dbError('P2034'));
-    await expect(service.execute('s', 'k', 'scope', jest.fn())).rejects.toBeInstanceOf(
+    await expect(service.execute('s', 'k', 'scope', jest.fn(), request)).rejects.toBeInstanceOf(
       ConflictException,
     );
   });
@@ -103,6 +123,6 @@ describe('IdempotencyService', () => {
   it('rethrows unexpected database errors untouched', async () => {
     const boom = new Error('connection lost');
     db.$transaction.mockRejectedValue(boom);
-    await expect(service.execute('s', 'k', 'scope', jest.fn())).rejects.toThrow('connection lost');
+    await expect(service.execute('s', 'k', 'scope', jest.fn(), request)).rejects.toThrow('connection lost');
   });
 });

@@ -26,6 +26,7 @@ import {
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { EmailRequestDto } from './dto/email-request.dto';
+import { AUTH_EMAIL_VERIFICATION, AUTH_PASSWORD_RESET, AuthMailEvent } from './auth-mail.events';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 
 const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -91,7 +92,7 @@ export class AuthService {
       });
     });
 
-    this.events.emit('auth.email_verification', { userId, token: rawToken });
+    void this.publishMailEvent(AUTH_EMAIL_VERIFICATION, { userId, token: rawToken });
     this.logger.info({ userId }, 'User registered');
     return {
       status: 'PENDING_VERIFICATION',
@@ -185,7 +186,7 @@ export class AuthService {
           },
         });
       });
-      this.events.emit('auth.email_verification', { userId: user.id, token: rawToken });
+      void this.publishMailEvent(AUTH_EMAIL_VERIFICATION, { userId: user.id, token: rawToken });
     }
     return response;
   }
@@ -200,7 +201,7 @@ export class AuthService {
     if (!user || !(await argon2.verify(user.passwordHash, dto.password))) {
       throw new UnauthorizedException(
         apiErrorPayload(
-          ErrorCode.UNAUTHORIZED,
+          ErrorCode.UNAUTHENTICATED,
           'Thông tin đăng nhập không chính xác.',
         ),
       );
@@ -239,7 +240,7 @@ export class AuthService {
     if (!user || !(await argon2.verify(user.passwordHash, dto.password))) {
       throw new UnauthorizedException(
         apiErrorPayload(
-          ErrorCode.UNAUTHORIZED,
+          ErrorCode.UNAUTHENTICATED,
           'Thông tin đăng nhập không chính xác.',
         ),
       );
@@ -283,7 +284,7 @@ export class AuthService {
     } catch {
       throw new UnauthorizedException(
         apiErrorPayload(
-          ErrorCode.UNAUTHORIZED,
+          ErrorCode.UNAUTHENTICATED,
           'Refresh token không hợp lệ hoặc đã hết hạn.',
         ),
       );
@@ -294,7 +295,7 @@ export class AuthService {
       payload.tokenId !== tokenId
     ) {
       throw new UnauthorizedException(
-        apiErrorPayload(ErrorCode.UNAUTHORIZED, 'Refresh token không hợp lệ.'),
+        apiErrorPayload(ErrorCode.UNAUTHENTICATED, 'Refresh token không hợp lệ.'),
       );
     }
 
@@ -302,7 +303,7 @@ export class AuthService {
     const numericUserId = this.parseUserId(userId);
     if (sessionId === null || numericUserId === null) {
       throw new UnauthorizedException(
-        apiErrorPayload(ErrorCode.UNAUTHORIZED, 'Refresh token không hợp lệ.'),
+        apiErrorPayload(ErrorCode.UNAUTHENTICATED, 'Refresh token không hợp lệ.'),
       );
     }
 
@@ -313,15 +314,19 @@ export class AuthService {
     if (
       stored?.userId !== numericUserId ||
       stored.expiresAt <= new Date() ||
-      stored.revokedAt ||
-      stored.refreshTokenHash !== this.hashToken(refreshToken)
+      stored.revokedAt
     ) {
+      throw new UnauthorizedException(apiErrorPayload(ErrorCode.UNAUTHENTICATED));
+    }
+    // A superseded token of an active session triggers the replay policy.
+    // A session already closed by logout/lock/reset cannot revoke later sessions.
+    if (stored.refreshTokenHash !== this.hashToken(refreshToken)) {
       return this.rejectRefreshReplay(numericUserId);
     }
     if (stored.user.status === UserStatus.LOCKED) {
       throw new UnauthorizedException(
         apiErrorPayload(
-          ErrorCode.UNAUTHORIZED,
+          ErrorCode.UNAUTHENTICATED,
           'Tài khoản đã bị khóa. Vui lòng liên hệ hỗ trợ.',
         ),
       );
@@ -345,6 +350,7 @@ export class AuthService {
           id: sessionId,
           userId: numericUserId,
           revokedAt: null,
+          expiresAt: { gt: new Date() },
           refreshTokenHash: stored.refreshTokenHash,
         },
         data: {
@@ -355,6 +361,13 @@ export class AuthService {
       return rotated.count > 0;
     });
     if (!rotationSucceeded) {
+      const current = await this.prisma.authSession.findUnique({
+        where: { id: sessionId },
+        select: { revokedAt: true, expiresAt: true },
+      });
+      if (!current || current.revokedAt || current.expiresAt <= new Date()) {
+        throw new UnauthorizedException(apiErrorPayload(ErrorCode.UNAUTHENTICATED));
+      }
       return this.rejectRefreshReplay(numericUserId);
     }
 
@@ -430,7 +443,7 @@ export class AuthService {
           },
         });
       });
-      this.events.emit('auth.password_reset', { userId: user.id, token: rawToken });
+      void this.publishMailEvent(AUTH_PASSWORD_RESET, { userId: user.id, token: rawToken });
     }
     return response;
   }
@@ -439,7 +452,7 @@ export class AuthService {
   async resetPassword(dto: ResetPasswordDto): Promise<ActionResult> {
     if (dto.password !== dto.passwordConfirmation) {
       throw new BadRequestException(
-        apiErrorPayload(ErrorCode.VALIDATION_ERROR, 'Dữ liệu đầu vào không hợp lệ.', [
+        apiErrorPayload(ErrorCode.BAD_REQUEST, 'Dữ liệu đầu vào không hợp lệ.', [
           { field: 'passwordConfirmation', message: 'Mật khẩu xác nhận không khớp.' },
         ]),
       );
@@ -495,6 +508,17 @@ export class AuthService {
     });
 
     return { status: 'COMPLETED', message: 'Đặt mật khẩu mới thành công.' };
+  }
+
+  private async publishMailEvent(
+    event: typeof AUTH_EMAIL_VERIFICATION | typeof AUTH_PASSWORD_RESET,
+    payload: AuthMailEvent,
+  ): Promise<void> {
+    try {
+      await this.events.emitAsync(event, payload);
+    } catch {
+      this.logger.warn({ event, userId: payload.userId }, 'Auth mail consumer failed');
+    }
   }
 
   // GET /me — Account của chính người dùng đang đăng nhập.
@@ -560,41 +584,51 @@ export class AuthService {
   // Tạo phiên mới: lưu hash refresh token vào AuthSession.
   // Session id (Int, autoincrement) chỉ có sau khi insert, nên insert trước rồi mới ký
   // cặp token có sid = session.id; hash được ghi lại đúng theo token cuối cùng phát ra.
-  private async issueTokens(
+  private issueTokens(
     user: User,
     options: { deviceInfo?: string; ipAddress?: string; rememberMe: boolean },
   ): Promise<AuthTokens> {
     const sessionTtlMs = this.refreshTtlMs(options.rememberMe);
     const expiresAt = new Date(Date.now() + sessionTtlMs);
-    const session = await this.prisma.authSession.create({
-      data: {
-        userId: user.id,
-        // Giá trị tạm hợp lệ về kiểu; được thay bằng hash thật ngay sau khi biết session.id.
-        refreshTokenHash: this.hashToken(randomUUID()),
-        expiresAt,
-      },
-      select: { id: true },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const session = await tx.authSession.create({
+        data: {
+          userId: user.id,
+          // Giá trị tạm hợp lệ về kiểu; được thay bằng hash thật ngay sau khi biết session.id.
+          refreshTokenHash: this.hashToken(randomUUID()),
+          expiresAt,
+        },
+        select: { id: true },
+      });
 
-    const accessToken = this.signAccess(user, String(session.id));
-    // JWT refresh phải sống đúng bằng AuthSession.expiresAt; rememberMe quyết định TTL 7 hay 30 ngày.
-    const refreshToken = this.signRefresh(
-      String(user.id),
-      String(session.id),
-      sessionTtlMs,
-    );
-    await this.prisma.authSession.update({
-      where: { id: session.id },
-      data: { refreshTokenHash: this.hashToken(refreshToken) },
-    });
+      // The FK insert holds the parent row until commit. Recheck the version
+      // after acquiring it in case a lock or password reset won the race.
+      const eligible = await tx.user.findUnique({
+        where: { id: user.id, version: user.version, status: UserStatus.ACTIVE, emailVerifiedAt: { not: null } },
+        select: { id: true },
+      });
+      if (!eligible) throw new UnauthorizedException(apiErrorPayload(ErrorCode.UNAUTHENTICATED));
 
-    return {
-      accessToken,
-      refreshToken,
-      tokenType: 'Bearer',
-      expiresIn: this.accessTtlSeconds(),
-      account: this.toAccount(user),
-    };
+      const accessToken = this.signAccess(user, String(session.id));
+      // JWT refresh phải sống đúng bằng AuthSession.expiresAt; rememberMe quyết định TTL 7 hay 30 ngày.
+      const refreshToken = this.signRefresh(
+        String(user.id),
+        String(session.id),
+        sessionTtlMs,
+      );
+      await tx.authSession.update({
+        where: { id: session.id },
+        data: { refreshTokenHash: this.hashToken(refreshToken) },
+      });
+
+      return {
+        accessToken,
+        refreshToken,
+        tokenType: 'Bearer',
+        expiresIn: this.accessTtlSeconds(),
+        account: this.toAccount(user),
+      };
+    });
   }
 
   private async revokeActiveSessions(userId: number): Promise<void> {
@@ -609,7 +643,7 @@ export class AuthService {
     await this.revokeActiveSessions(userId);
     throw new UnauthorizedException(
       apiErrorPayload(
-        ErrorCode.UNAUTHORIZED,
+        ErrorCode.UNAUTHENTICATED,
         'Phát hiện tái sử dụng token. Vui lòng đăng nhập lại.',
       ),
     );
@@ -669,6 +703,7 @@ export class AuthService {
       {
         secret: this.refreshSecret(),
         algorithm: 'HS256',
+        jwtid: randomUUID(),
         expiresIn: Math.max(1, Math.floor(ttlMs / 1000)),
       },
     );
@@ -695,9 +730,9 @@ export class AuthService {
           ...(entry.ip ? { ip: entry.ip.slice(0, 45) } : {}),
         },
       });
-    } catch (error) {
+    } catch {
       this.logger.warn(
-        { action: entry.action, entityId: entry.entityId, error: String(error) },
+        { action: entry.action, entityId: entry.entityId },
         'Failed to write audit log',
       );
     }

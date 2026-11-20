@@ -9,6 +9,8 @@ Backend dùng NestJS và TypeScript, tổ chức theo hướng Modular Monolith.
 
 ## Cấu hình và chạy local
 
+Chạy các lệnh bên dưới trong thư mục `for-her-fashion-backend`.
+
 ### 1. Tạo file môi trường
 
 Chỉ sao chép mẫu khi chưa có `.env`:
@@ -28,7 +30,7 @@ Mở `.env` và đặt `MYSQL_PASSWORD`. Dùng cùng giá trị đó trong `DATA
 ### 2. Khởi động MySQL và tạo các bảng
 
 ```bash
-docker compose up -d mysql
+docker compose up -d --wait mysql
 npm ci
 npm run prisma:validate
 npm run prisma:generate
@@ -37,7 +39,7 @@ npm run prisma:migrate:deploy
 
 Docker Compose tự tạo database `for_her_fashion_dev` trên MySQL 8. Cổng host là `3307`, cổng trong container là `3306`. Migration đã commit tạo các bảng theo schema thống nhất tại `prisma/schema.prisma`; không cần tạo database hoặc bảng thủ công trong MySQL Workbench.
 
-Sau đó chạy API:
+Tạo tài khoản quản trị local theo mục [Seed tài khoản quản trị](#seed-tài-khoản-quản-trị), rồi chạy API:
 
 ```bash
 npm run start:dev
@@ -52,7 +54,11 @@ Tạo connection với host `127.0.0.1`, port `3307`, user `app_user`, password 
 - Swagger UI: `http://localhost:3000/docs`
 - OpenAPI contract: [`docs/for-her-fashion-openapi.yaml`](docs/for-her-fashion-openapi.yaml)
 
-Swagger UI phục vụ contract API đã thống nhất (`docs/for-her-fashion-openapi.yaml`, 102 path của 14 module). M01 và Shared đã được triển khai thật; các path còn lại là đặc tả cho module tương ứng và sẽ trả 404 cho tới khi module đó được merge.
+Swagger UI phục vụ contract API đã thống nhất (`docs/for-her-fashion-openapi.yaml`, 102 path của 14 module). M01 và Shared có 16 operation chạy được. Các path còn lại mô tả API của những module đang chờ triển khai.
+
+Ghi chú tích hợp HTTP giải thích mã lỗi, các phản hồi 401 của login và refresh, header truy vết của logout và giới hạn 255 ký tự khi nhập lý do khóa tài khoản. [Ghi chú tích hợp HTTP](docs/BE-01-INTEGRATION-GUIDE.md#http-swagger-và-migration)
+
+Để chạy cả API trong Docker local, hoàn tất migrate và seed trên host trước, rồi chạy `docker compose up -d --build --wait backend`. Compose dùng `mysql:3306` trong mạng nội bộ. Dừng API chạy trên host trước khi dùng cùng cổng 3000 cho container.
 
 ## Prisma schema và migration
 
@@ -89,8 +95,19 @@ trong `tests/` bằng [jest-e2e.config.js](jest-e2e.config.js); E2E boot module 
 | `src/modules/auth/admin-accounts.service.spec.ts` | Phân trang, phạm vi Staff/Admin, optimistic locking, tự khóa, tạo tài khoản nội bộ |
 | `src/modules/auth/dto/auth.dto.spec.ts` | Biên mật khẩu, SĐT, pagination, `version`/`reason` bắt buộc |
 | `src/modules/auth/strategies/jwt.strategy.spec.ts` | Claim sai, tài khoản LOCKED, chưa xác thực, `sid` cho logout |
-| `src/modules/uploads/uploads.controller.spec.ts` | Schema `Upload`, chặn MIME sai, dọn file khi ghi DB lỗi |
+| `src/common/services/file-upload.service.spec.ts` | Chữ ký định dạng, kích thước và lưu tệp |
 | `tests/*.e2e-spec.ts` | Route contract, 204, phân quyền, upload multipart, Swagger đủ path M01/Shared |
+| `tests/be01.mysql-spec.ts` | HTTP/MySQL 8, reset, khóa/mở, quyền hiện tại, scope file, replay và rollback |
+
+Để chạy suite MySQL, tạo một database MySQL 8 local riêng có tên kết thúc bằng `_test`. Đặt `DATABASE_URL` và `BE01_TEST_DATABASE_URL` trỏ vào database đó, sau đó chạy migrate và seed với cùng `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` sẽ dùng cho test.
+
+```bash
+npm run prisma:migrate:deploy
+npm run prisma:seed
+npm run test:e2e -- --testRegex 'be01\.mysql-spec\.ts$'
+```
+
+Suite tạo fixture riêng cho mỗi lần chạy. Dùng database dành cho kiểm thử.
 
 ## Seed tài khoản quản trị
 
@@ -127,9 +144,9 @@ Quy ước bắt buộc khi thêm module mới:
 - Ném lỗi qua `apiErrorPayload(code, message, details)` để client nhận đúng `error.code`.
 - Route mặc định cần JWT; chỉ thêm `@Public()` cho endpoint thật sự công khai.
 - API tài nguyên thuộc người dùng phải lấy owner ID từ `@CurrentUser()` và đưa điều kiện owner vào truy vấn đọc/cập nhật/xóa; không tin `userId`/`ownerId` do request gửi. Truy cập chéo tài khoản chỉ được mở qua endpoint có role policy rõ ràng.
-- Thao tác ghi của module khác dùng `IdempotencyService.execute(...)` với header `Idempotency-Key`.
+- Với các operation mà OpenAPI yêu cầu `Idempotency-Key`, dùng `IdempotencyService.execute(...)` để xử lý yêu cầu gửi lại.
 
-Test kiểm tra contract OpenAPI được parse và có version/path hợp lệ. Chưa có tích hợp MoMo, KiotViet hoặc email; khi bổ sung, test các tích hợp này bằng mock và không dùng credentials thật.
+Xem [hướng dẫn tích hợp BE-01](docs/BE-01-INTEGRATION-GUIDE.md) cho cách truyền transaction, scope file và giao event email với BE-06. Suite MySQL bắt event qua adapter test để kiểm tra xác thực và đặt lại mật khẩu. Việc giao thư cần consumer M13 và transport đã cấu hình.
 
 ## GitHub Actions CI
 

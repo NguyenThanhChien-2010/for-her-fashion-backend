@@ -13,6 +13,7 @@ export const appConfigValidationSchema = Joi.object({
   JWT_SECRET: Joi.string().min(16).optional(),
   JWT_ACCESS_SECRET: Joi.string().min(16).optional(),
   JWT_REFRESH_SECRET: Joi.string().min(16).optional(),
+  IDEMPOTENCY_SECRET: Joi.string().min(32).optional(),
   JWT_ACCESS_EXPIRES_IN: Joi.string().default('15m'),
   JWT_REFRESH_EXPIRES_IN: Joi.string().default('7d'),
   JWT_REMEMBER_ME_EXPIRES_IN: Joi.string().default('30d'),

@@ -21,13 +21,13 @@ export class FieldErrorDto {
 }
 
 export class ApiErrorBodyDto {
-  @ApiProperty({ example: 'VALIDATION_ERROR' })
+  @ApiProperty({ example: 'BAD_REQUEST' })
   code!: string;
 
   @ApiProperty({ example: 'Dữ liệu đầu vào không hợp lệ.' })
   message!: string;
 
-  @ApiProperty({ type: [FieldErrorDto] })
+  @ApiPropertyOptional({ type: [FieldErrorDto] })
   details!: FieldErrorDto[];
 }
 
@@ -48,16 +48,16 @@ export class ActionResultDto {
 }
 
 export class AccountDto {
-  @ApiProperty({ example: '123' })
+  @ApiProperty({ pattern: '^[1-9][0-9]*$', example: '123' })
   id!: string;
 
   @ApiProperty({ example: 'Nguyễn An' })
   fullName!: string;
 
-  @ApiProperty({ example: 'khach@example.com', format: 'email' })
+  @ApiPropertyOptional({ example: 'khach@example.com', format: 'email' })
   email!: string;
 
-  @ApiPropertyOptional({ example: '0901234567' })
+  @ApiPropertyOptional({ pattern: String.raw`^\+?[0-9]{9,15}$`, example: '0901234567' })
   phone?: string;
 
   @ApiProperty({ enum: ['CUSTOMER', 'STAFF', 'ADMIN'], example: 'CUSTOMER' })
@@ -66,10 +66,10 @@ export class AccountDto {
   @ApiProperty({ enum: ['PENDING_VERIFICATION', 'ACTIVE', 'LOCKED'], example: 'ACTIVE' })
   status!: 'PENDING_VERIFICATION' | 'ACTIVE' | 'LOCKED';
 
-  @ApiProperty({ example: true })
+  @ApiPropertyOptional({ example: true })
   emailVerified!: boolean;
 
-  @ApiProperty({ example: 3, description: 'Phiên bản đã đọc; backend tăng khi cập nhật thành công.' })
+  @ApiProperty({ type: 'integer', format: 'int64', minimum: 1, example: 3, description: 'Phiên bản đã đọc; backend tăng khi cập nhật thành công.' })
   version!: number;
 }
 
@@ -83,7 +83,7 @@ export class AuthTokensDto {
   @ApiProperty({ enum: ['Bearer'], example: 'Bearer' })
   tokenType!: 'Bearer';
 
-  @ApiProperty({ example: 900, description: 'Thời gian sống thực tế của access token theo cấu hình M01.' })
+  @ApiProperty({ type: 'integer', format: 'int64', minimum: 1, example: 900, description: 'Thời gian sống thực tế của access token theo cấu hình M01.' })
   expiresIn!: number;
 
   @ApiProperty({ type: AccountDto })
@@ -91,13 +91,13 @@ export class AuthTokensDto {
 }
 
 export class PaginationDto {
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ type: 'integer', format: 'int64', minimum: 1, example: 1 })
   page!: number;
 
-  @ApiProperty({ example: 20 })
+  @ApiProperty({ type: 'integer', format: 'int64', minimum: 1, maximum: 100, example: 20 })
   limit!: number;
 
-  @ApiProperty({ example: 0 })
+  @ApiProperty({ type: 'integer', format: 'int64', minimum: 0, example: 0 })
   total!: number;
 }
 
@@ -110,7 +110,7 @@ export class PaginatedAccountsDto {
 }
 
 export class UploadDto {
-  @ApiProperty({ example: '123' })
+  @ApiProperty({ pattern: '^[1-9][0-9]*$', example: '123' })
   id!: string;
 
   @ApiProperty({ enum: ['REVIEW', 'RETURN', 'PRODUCT', 'REFUND_EVIDENCE'], example: 'REVIEW' })
@@ -119,7 +119,7 @@ export class UploadDto {
   @ApiProperty({ enum: ['image/jpeg', 'image/png'], example: 'image/jpeg' })
   mimeType!: 'image/jpeg' | 'image/png';
 
-  @ApiProperty({ example: 120000 })
+  @ApiProperty({ type: 'integer', format: 'int64', minimum: 0, example: 120000 })
   sizeBytes!: number;
 
   @ApiProperty({ enum: ['PRIVATE', 'PUBLIC_AFTER_APPROVAL'], example: 'PRIVATE' })
@@ -173,7 +173,7 @@ export function ApiNoContentResponse(
   );
 }
 
-// Một decorator cho mọi mã lỗi chuẩn để Swagger liệt kê đầy đủ và cùng một schema ApiError.
+// Khai báo các status được truyền từ controller với cùng schema ApiError.
 export function ApiErrorResponses(
   ...statuses: number[]
 ): MethodDecorator & ClassDecorator {
@@ -182,6 +182,9 @@ export function ApiErrorResponses(
     ...statuses.map((status) =>
       ApiResponse({
         status,
+        headers: status === 429
+          ? { 'Retry-After': { schema: { type: 'integer', minimum: 1 } } }
+          : undefined,
         schema: { $ref: getSchemaPath(ApiErrorEnvelopeDto) },
       }),
     ),

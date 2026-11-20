@@ -38,7 +38,7 @@ export class FileUploadService {
       file.size !== buffer.length
     ) {
       throw new BadRequestException(
-        apiErrorPayload(ErrorCode.VALIDATION_ERROR, 'Dữ liệu đầu vào không hợp lệ.', [
+        apiErrorPayload(ErrorCode.BAD_REQUEST, 'Dữ liệu đầu vào không hợp lệ.', [
           {
             field: 'file',
             message: `Tệp phải có kích thước từ 1 byte đến ${Math.floor(maxBytes / (1024 * 1024))} MB.`,
@@ -54,7 +54,7 @@ export class FileUploadService {
       (allowed && !allowed.includes(detected.mimeType as 'image/jpeg' | 'image/png'))
     ) {
       throw new BadRequestException(
-        apiErrorPayload(ErrorCode.VALIDATION_ERROR, 'Dữ liệu đầu vào không hợp lệ.', [
+        apiErrorPayload(ErrorCode.BAD_REQUEST, 'Dữ liệu đầu vào không hợp lệ.', [
           {
             field: 'file',
             message:

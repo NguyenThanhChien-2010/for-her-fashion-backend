@@ -1,5 +1,5 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import type { Request } from 'express';
 import {
@@ -33,12 +33,13 @@ export class AuthController {
   @Post('auth/register')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
+    operationId: 'm01_post_auth_register',
     summary: 'Đăng ký tài khoản khách hàng',
     description:
       'Tạo tài khoản chờ xác thực (emailVerifiedAt null), phát mã xác thực hạn 24 giờ và băm Argon2id mật khẩu.',
   })
   @ApiSuccessResponse(201, ActionResultDto)
-  @ApiErrorResponses(400, 409, 422, 429, 500)
+  @ApiErrorResponses(400, 403, 404, 409, 422, 429, 500, 503)
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
   }
@@ -48,12 +49,13 @@ export class AuthController {
   @Post('auth/email-verifications/confirm')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
+    operationId: 'm01_post_auth_email_verifications_confirm',
     summary: 'Xác thực email',
     description:
       'Kích hoạt tài khoản và tiêu thụ mã xác thực trong cùng một giao dịch; không tự đăng nhập.',
   })
   @ApiSuccessResponse(200, ActionResultDto)
-  @ApiErrorResponses(400, 422, 429, 500)
+  @ApiErrorResponses(400, 403, 404, 409, 422, 429, 500, 503)
   confirmEmail(@Body() dto: TokenDto) {
     return this.authService.confirmEmail(dto.token);
   }
@@ -63,12 +65,13 @@ export class AuthController {
   @Post('auth/email-verifications/resend')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
+    operationId: 'm01_post_auth_email_verifications_resend',
     summary: 'Gửi lại email xác thực',
     description:
       'Luôn trả thông báo chung để không tiết lộ email có tồn tại; mã mới vô hiệu mã cũ nếu tài khoản đủ điều kiện.',
   })
   @ApiSuccessResponse(202, ActionResultDto, 'Đã tiếp nhận yêu cầu gửi lại email xác thực.')
-  @ApiErrorResponses(400, 422, 429, 500)
+  @ApiErrorResponses(400, 403, 404, 409, 422, 429, 500, 503)
   resendEmailVerification(@Body() dto: EmailRequestDto) {
     return this.authService.resendEmailVerification(dto);
   }
@@ -78,11 +81,12 @@ export class AuthController {
   @Post('auth/login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
+    operationId: 'm01_post_auth_login',
     summary: 'Đăng nhập khách hàng',
     description: 'Đăng nhập bằng email hoặc số điện thoại (identifier). Trả cặp token và Account.',
   })
   @ApiSuccessResponse(200, AuthTokensDto)
-  @ApiErrorResponses(400, 401, 403, 422, 429, 500)
+  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500, 503)
   login(@Body() dto: LoginDto, @Req() req: Request) {
     const userAgent = req.headers['user-agent'];
     return this.authService.login(
@@ -97,19 +101,20 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(AuthGuard('jwt-refresh'))
   @ApiOperation({
+    operationId: 'm01_post_auth_refresh',
     summary: 'Làm mới phiên',
     description:
       'Xoay refresh token: kiểm tra chữ ký, session id, trạng thái thu hồi/tài khoản khóa; phát hiện tái sử dụng sẽ thu hồi toàn bộ phiên.',
   })
-  @ApiBody({ type: RefreshTokenDto })
   @ApiSuccessResponse(200, AuthTokensDto)
-  @ApiErrorResponses(400, 401, 403, 422, 429, 500)
+  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500, 503)
   refresh(
-    @Req() req: Request & { user: { sub: string; tokenId: string; refreshToken: string } },
+    @Body() dto: RefreshTokenDto,
+    @Req() req: Request & { user: { sub: string; tokenId: string } },
   ) {
     return this.authService.refreshTokens(
       req.user.sub,
-      req.user.refreshToken,
+      dto.refreshToken,
       req.user.tokenId,
     );
   }
@@ -118,11 +123,12 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiBearerAuth('BearerAuth')
   @ApiOperation({
+    operationId: 'm01_post_auth_logout',
     summary: 'Đăng xuất và thu hồi phiên',
     description: 'Thu hồi AuthSession của phiên hiện tại. Trả 204, không có body.',
   })
   @ApiNoContentResponse()
-  @ApiErrorResponses(401, 403, 429, 500)
+  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500, 503)
   async logout(@CurrentUser() user: AuthenticatedUser): Promise<void> {
     // user.id là Int theo schema Leader; service nhận chuỗi để đồng nhất với contract.
     await this.authService.logout(String(user.id), user.sessionId);
@@ -133,12 +139,13 @@ export class AuthController {
   @Post('auth/password/forgot')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
+    operationId: 'm01_post_auth_password_forgot',
     summary: 'Yêu cầu đặt lại mật khẩu',
     description:
       'Luôn trả thông báo chung; mã một lần hạn 30 phút. Không tiết lộ email có tồn tại.',
   })
   @ApiSuccessResponse(202, ActionResultDto, 'Đã tiếp nhận yêu cầu đặt lại mật khẩu.')
-  @ApiErrorResponses(400, 422, 429, 500)
+  @ApiErrorResponses(400, 403, 404, 409, 422, 429, 500, 503)
   forgotPassword(@Body() dto: EmailRequestDto) {
     return this.authService.forgotPassword(dto);
   }
@@ -148,12 +155,13 @@ export class AuthController {
   @Post('auth/password/reset')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
+    operationId: 'm01_post_auth_password_reset',
     summary: 'Đặt mật khẩu mới',
     description:
       'Đổi mật khẩu, tiêu thụ mã và thu hồi toàn bộ phiên cũ trong cùng giao dịch; không tự đăng nhập.',
   })
   @ApiSuccessResponse(200, ActionResultDto)
-  @ApiErrorResponses(400, 422, 429, 500)
+  @ApiErrorResponses(400, 403, 404, 409, 422, 429, 500, 503)
   resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto);
   }

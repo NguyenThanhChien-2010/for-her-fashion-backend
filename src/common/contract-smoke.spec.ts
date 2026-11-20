@@ -9,8 +9,8 @@ import { ErrorCode, flattenValidationErrors } from './errors/api-error';
 
 // SPEC tối thiểu cho contract: nếu một trong hai thành phần bị đổi shape, suite này fail ngay.
 describe('Contract envelope smoke test', () => {
-  it('declares the VALIDATION_ERROR code used by the Swagger contract', () => {
-    expect(ErrorCode.VALIDATION_ERROR).toBe('VALIDATION_ERROR');
+  it('declares the BAD_REQUEST code used by the Swagger contract', () => {
+    expect(ErrorCode.BAD_REQUEST).toBe('BAD_REQUEST');
     expect(flattenValidationErrors([])).toEqual([]);
   });
 
@@ -33,7 +33,7 @@ describe('Contract envelope smoke test', () => {
     );
     expect(json.mock.calls[0][0]).toStrictEqual({
       error: {
-        code: 'INTERNAL_SERVER_ERROR',
+        code: 'INTERNAL_ERROR',
         message: 'Đã xảy ra lỗi hệ thống. Vui lòng thử lại sau.',
         details: [],
       },

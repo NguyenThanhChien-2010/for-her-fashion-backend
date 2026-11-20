@@ -51,7 +51,7 @@ export class AccountRoleUpdateDto {
   reason!: string;
 }
 
-// AccountStatusUpdate: LOCKED ở contract tương ứng BLOCKED trong database.
+// AccountStatusUpdate: lý do khóa/mở theo contract và được lưu để audit.
 export class AccountStatusUpdateDto {
   @ApiProperty({ description: 'Phiên bản đã đọc của tài khoản.', minimum: 1, example: 3 })
   @Type(() => Number)
@@ -63,7 +63,7 @@ export class AccountStatusUpdateDto {
   @IsEnum(['ACTIVE', 'LOCKED'])
   status!: 'ACTIVE' | 'LOCKED';
 
-  @ApiProperty({ description: 'Lý do khóa/mở, lưu lại để audit.', minLength: 1, maxLength: 2000, example: 'Phát hiện hành vi gian lận.' })
+  @ApiProperty({ description: 'Lý do lưu để audit. Khi status là LOCKED, giới hạn 255 ký tự.', minLength: 1, maxLength: 2000, example: 'Phát hiện hành vi gian lận.' })
   @IsString()
   @MinLength(1)
   @MaxLength(2000)

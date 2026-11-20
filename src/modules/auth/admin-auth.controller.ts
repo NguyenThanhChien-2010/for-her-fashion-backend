@@ -20,12 +20,13 @@ export class AdminAuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
+    operationId: 'm01_post_admin_auth_login',
     summary: 'Đăng nhập quản trị',
     description:
       'Chỉ cấp phiên quản trị cho tài khoản nội bộ đang hoạt động có role STAFF/ADMIN. Khách hàng bị từ chối 403.',
   })
   @ApiSuccessResponse(200, AuthTokensDto)
-  @ApiErrorResponses(400, 401, 403, 422, 429, 500)
+  @ApiErrorResponses(400, 401, 403, 404, 409, 422, 429, 500, 503)
   adminLogin(@Body() dto: LoginDto, @Req() req: Request) {
     const userAgent = req.headers['user-agent'];
     return this.authService.adminLogin(
