@@ -1,15 +1,11 @@
 import * as Joi from 'joi';
 
-// Joi fail-fast cấu hình trước khi app boot.
-// Bám biến môi trường của Leader (.env.example) nhưng chấp nhận thêm bộ biến JWT tách rời
-// để không phá vỡ cấu hình local đã có; chỉ cần tồn tại ít nhất một secret.
 export const appConfigValidationSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
   PORT: Joi.number().port().default(3000),
   API_PREFIX: Joi.string().default('api/v1'),
   DATABASE_URL: Joi.string().required(),
 
-  // Leader dùng một JWT_SECRET; code M01 ưu tiên biến tách riêng nếu được cấu hình.
   JWT_SECRET: Joi.string().min(16).optional(),
   JWT_ACCESS_SECRET: Joi.string().min(16).optional(),
   JWT_REFRESH_SECRET: Joi.string().min(16).optional(),

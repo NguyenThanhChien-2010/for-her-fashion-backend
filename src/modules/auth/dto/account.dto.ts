@@ -3,7 +3,6 @@ import { Type } from 'class-transformer';
 import { IsEmail, IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength, Matches } from 'class-validator';
 import { StrongPassword } from './password.decorator';
 
-// Query params của GET /admin/accounts đúng contract: q, role, page (default 1), limit (default 20, max 100).
 export class AccountQueryDto {
   @ApiPropertyOptional({ description: 'Từ khóa tìm theo họ tên, email hoặc số điện thoại.', maxLength: 100 })
   @IsOptional()
@@ -32,7 +31,6 @@ export class AccountQueryDto {
   limit?: number;
 }
 
-// AccountRoleUpdate: bắt buộc version (optimistic locking), role nội bộ và reason để audit.
 export class AccountRoleUpdateDto {
   @ApiProperty({ description: 'Phiên bản đã đọc của tài khoản.', minimum: 1, example: 3 })
   @Type(() => Number)
@@ -51,7 +49,6 @@ export class AccountRoleUpdateDto {
   reason!: string;
 }
 
-// AccountStatusUpdate: LOCKED ở contract tương ứng BLOCKED trong database.
 export class AccountStatusUpdateDto {
   @ApiProperty({ description: 'Phiên bản đã đọc của tài khoản.', minimum: 1, example: 3 })
   @Type(() => Number)
@@ -70,8 +67,6 @@ export class AccountStatusUpdateDto {
   reason!: string;
 }
 
-// InternalAccountCreate: Admin tạo tài khoản nội bộ; role chỉ STAFF|ADMIN, không nhận CUSTOMER.
-// email/phone kiểm tra cùng chuẩn với RegisterRequest để dữ liệu vào một đường duy nhất.
 export class InternalAccountCreateDto {
   @ApiProperty({ example: 'Nhân viên For Her', minLength: 1, maxLength: 100 })
   @IsString()

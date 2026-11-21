@@ -6,8 +6,6 @@ import { PrismaService } from '../src/modules/prisma/prisma.service';
 import { validationExceptionFactory } from '../src/common/errors/api-error';
 import { createSwaggerDocument } from '../src/common/swagger/swagger.setup';
 
-// Kiểm chứng Swagger sinh ra đúng 100% path M01 + Shared của API Contract v1.0.2.
-// Đây là gate chống lệch route: thêm/đổi path mà quên contract sẽ fail ngay tại đây.
 const CONTRACT_M01_PATHS = [
   '/auth/register',
   '/auth/email-verifications/confirm',
@@ -71,7 +69,6 @@ describe('Swagger contract alignment (M01 + Shared)', () => {
   });
 
   it.each(CONTRACT_M01_PATHS)('exposes %s in the OpenAPI document', (path) => {
-    // app.setGlobalPrefix('api/v1') làm Swagger sinh path đầy đủ; contract khai báo base path /api/v1.
     expect(document.paths[`/api/v1${path}`]).toBeDefined();
   });
 
@@ -83,6 +80,26 @@ describe('Swagger contract alignment (M01 + Shared)', () => {
   it('declares the contract version and the BearerAuth scheme', () => {
     expect(document.info.version).toBe('1.0.2');
     expect(document.components?.securitySchemes?.BearerAuth).toBeDefined();
+  });
+
+  it('documents registration fields including password confirmation', () => {
+    const register = document.paths['/api/v1/auth/register']?.post;
+    const requestBody = register?.requestBody as
+      | { content?: { 'application/json'?: { schema?: { $ref?: string } } } }
+      | undefined;
+    const schemaName = requestBody?.content?.['application/json']?.schema?.$ref?.split('/').pop();
+    const schema = schemaName ? document.components?.schemas?.[schemaName] : undefined;
+
+    expect(schema).toMatchObject({
+      required: ['fullName', 'email', 'password', 'passwordConfirmation'],
+      properties: {
+        fullName: expect.any(Object),
+        email: expect.any(Object),
+        password: expect.any(Object),
+        passwordConfirmation: expect.any(Object),
+      },
+    });
+    expect(schema).not.toHaveProperty('properties.phone');
   });
 
   it('documents 204 for logout with no success body', () => {
@@ -98,7 +115,6 @@ describe('Swagger contract alignment (M01 + Shared)', () => {
 
   it('serves a document covering at least the M01 + Shared surface', async () => {
     expect(Object.keys(document.paths).length).toBeGreaterThanOrEqual(CONTRACT_M01_PATHS.length);
-    // Bảo đảm app thực sự phục vụ được route /me đã khai báo trong document.
     await request(app.getHttpServer()).get('/api/v1/me').expect(401);
   });
 });

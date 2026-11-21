@@ -5,8 +5,6 @@ import { Observable } from 'rxjs';
 import { apiErrorPayload, ErrorCode } from '../errors/api-error';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
-// Global guard bảo vệ mọi route; chỉ route có @Public() mới được bypass.
-// Các module BE-02..BE-06 không cần tự lặp lại logic Bearer token.
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
   constructor(private readonly reflector: Reflector) {

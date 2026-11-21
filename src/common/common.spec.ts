@@ -25,7 +25,6 @@ const context = (user?: { role: UserRole }): ExecutionContext =>
     switchToHttp: () => ({ getRequest: () => ({ user }) }),
   }) as unknown as ExecutionContext;
 
-// Host giả lập response Express để kiểm tra envelope lỗi và header X-Request-ID.
 function errorHost(request: Record<string, unknown> = { method: 'GET', url: '/', headers: {} }) {
   const json = jest.fn();
   const setHeader = jest.fn();

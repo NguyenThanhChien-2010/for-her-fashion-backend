@@ -11,10 +11,8 @@ import type { App } from 'supertest/types';
 import { PrismaService } from '../src/modules/prisma/prisma.service';
 import { validationExceptionFactory } from '../src/common/errors/api-error';
 
-// E2E cho toàn bộ bề mặt M01 + Shared của API Contract v1.0.2 trên schema Leader (Int id).
 const ACCESS_SECRET = 'test-access-secret-with-at-least-32-chars';
 const REFRESH_SECRET = 'test-refresh-secret-with-at-least-32-chars';
-// Fixture E2E: credential giả lập, không phải bí mật thật và không dùng ở production.
 const SAMPLE_LOGIN_CREDENTIAL = 'MatKhauMinhHoa!2026';
 const SAMPLE_INTERNAL_CREDENTIAL = 'MatKhauNoiBo!2026';
 
@@ -122,7 +120,6 @@ describe('M01 + Shared HTTP contract', () => {
       },
       auditLog: { create: jest.fn().mockResolvedValue({ id: 50 }) },
     };
-    // $transaction chỉ cần chạy callback với chính stub (đóng vai tx client).
     const transactionStub = {
       ...prismaStub,
       $transaction: jest.fn(
@@ -198,14 +195,12 @@ describe('M01 + Shared HTTP contract', () => {
         id: '1',
         fullName: 'Nguyễn An',
         email: 'khach@example.com',
-        phone: '0901234567',
         role: 'CUSTOMER',
         status: 'ACTIVE',
         emailVerified: true,
         version: 3,
       },
     });
-    // Account không được lộ passwordHash ở bất kỳ tầng nào.
     expect(JSON.stringify(result.body)).not.toContain('passwordHash');
   });
 
@@ -273,7 +268,6 @@ describe('M01 + Shared HTTP contract', () => {
       .expect(204);
     expect(result.text).toBe('');
     expect(result.body).toEqual({});
-    // Thu hồi đúng AuthSession gắn với sid của access token.
     expect(prisma.authSession.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 10, userId: 1, revokedAt: null } }),
     );
@@ -301,7 +295,6 @@ describe('M01 + Shared HTTP contract', () => {
   it('PATCH /admin/accounts/:id/status maps LOCKED and revokes sessions', async () => {
     currentUser = userRow({ role: UserRole.ADMIN });
     targetUser = userRow({ id: 2, email: 'target@example.com', role: UserRole.STAFF, version: 3 });
-    // Response trả bản ghi sau khi ghi: đã LOCKED và version tăng lên 4.
     prisma.user.findUniqueOrThrow.mockImplementation(() =>
       Promise.resolve(
         userRow({
@@ -327,7 +320,6 @@ describe('M01 + Shared HTTP contract', () => {
 
   it('PATCH /admin/accounts/:id/role reports CONFLICT on a stale version', async () => {
     currentUser = userRow({ role: UserRole.ADMIN });
-    // Bản ghi đã bị người khác cập nhật lên version 5 trong khi client còn giữ version 3.
     targetUser = userRow({ id: 2, email: 'target@example.com', role: UserRole.STAFF, version: 5 });
     const token = accessToken({ role: UserRole.ADMIN });
     const result = await request(app.getHttpServer())

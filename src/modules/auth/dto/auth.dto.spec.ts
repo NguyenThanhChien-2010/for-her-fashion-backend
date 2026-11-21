@@ -13,12 +13,11 @@ import {
   InternalAccountCreateDto,
 } from './account.dto';
 
-// Đăng ký hợp lệ theo RegisterRequest của API Contract v1.0.2: phone là bắt buộc.
 const registration = {
   email: 'user@example.com',
   fullName: 'Test User',
-  phone: '0901234567',
   password: 'StrongPass@123',
+  passwordConfirmation: 'StrongPass@123',
 };
 
 describe('Auth DTO validation', () => {
@@ -42,32 +41,23 @@ describe('Auth DTO validation', () => {
   });
 
   it.each(['Aa1!aaaa', 'Aa1!' + 'a'.repeat(124)])('accepts password boundaries', (password) => {
-    expect(validateSync(plainToInstance(RegisterDto, { ...registration, password }))).toEqual([]);
+    expect(
+      validateSync(
+        plainToInstance(RegisterDto, { ...registration, password, passwordConfirmation: password }),
+      ),
+    ).toEqual([]);
   });
 
-  it.each(['0901234567', '+84901234567', '123456789'])(
-    'accepts the contract phone pattern %s',
-    (phone) => {
-      expect(validateSync(plainToInstance(RegisterDto, { ...registration, phone }))).toEqual([]);
-    },
-  );
+  it('accepts registration with matching password confirmation', () => {
+    expect(validateSync(plainToInstance(RegisterDto, registration))).toEqual([]);
+  });
 
-  it.each(['0901234567x', '0901234567\n', '123', 901234567])(
-    'rejects malformed phone %#',
-    (phone) => {
-      expect(
-        validateSync(plainToInstance(RegisterDto, { ...registration, phone })).length,
-      ).toBeGreaterThan(0);
-    },
-  );
+  it('rejects registration when password confirmation does not match', () => {
+    const errors = validateSync(
+      plainToInstance(RegisterDto, { ...registration, passwordConfirmation: 'DifferentPass@123' }),
+    );
 
-  it('requires phone on registration because RegisterRequest marks it required', () => {
-    const withoutPhone = {
-      email: registration.email,
-      fullName: registration.fullName,
-      password: registration.password,
-    };
-    expect(validateSync(plainToInstance(RegisterDto, withoutPhone)).length).toBeGreaterThan(0);
+    expect(errors.some(({ property }) => property === 'passwordConfirmation')).toBe(true);
   });
 
   it.each(['', 123, null, []])('requires a string token %#', (token) => {
@@ -82,7 +72,6 @@ describe('Auth DTO validation', () => {
     ).toBeGreaterThan(0);
   });
 
-  // LoginRequest dùng identifier, không dùng email riêng; rememberMe là boolean tuỳ chọn.
   it('accepts identifier login with optional rememberMe', () => {
     expect(
       validateSync(
@@ -119,7 +108,6 @@ describe('Auth DTO validation', () => {
     expect(validateSync(plainToInstance(EmailRequestDto, { email: 'not-an-email' })).length).toBeGreaterThan(0);
   });
 
-  // AccountQueryDto: page/limit phải transform từ query string và clamp đúng biên contract.
   it('transforms and validates pagination bounds', () => {
     expect(validateSync(plainToInstance(AccountQueryDto, { page: '2', limit: '100' }))).toEqual([]);
     expect(validateSync(plainToInstance(AccountQueryDto, { limit: '101' })).length).toBeGreaterThan(0);
@@ -131,7 +119,6 @@ describe('Auth DTO validation', () => {
     expect(validateSync(plainToInstance(AccountQueryDto, { role: 'ROOT' })).length).toBeGreaterThan(0);
   });
 
-  // Optimistic locking: version >= 1 bắt buộc, reason bắt buộc cho audit.
   it('requires version and reason on account mutations', () => {
     expect(
       validateSync(plainToInstance(AccountRoleUpdateDto, { version: '3', role: 'STAFF', reason: 'Bổ nhiệm' })),

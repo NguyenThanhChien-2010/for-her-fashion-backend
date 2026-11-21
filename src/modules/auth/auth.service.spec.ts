@@ -94,11 +94,9 @@ function deps() {
       update: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    // AuditLog của Leader ghi thao tác bảo mật; stub để test không chạm DB.
     auditLog: { create: jest.fn().mockResolvedValue({ id: 99 }) },
     $transaction: jest.fn(async (fn: (x: typeof tx) => Promise<unknown>) => fn(tx)),
   };
-  // sign nhận (payload, options) để test đọc được expiresIn của từng loại token.
   const jwt = {
     sign: jest.fn((payload: object, options?: Record<string, unknown>) =>
       options ? `${JSON.stringify(payload)}|${String(options.expiresIn ?? '')}` : JSON.stringify(payload),
@@ -141,7 +139,7 @@ function deps() {
 describe('AuthService', () => {
   beforeEach(() => jest.restoreAllMocks());
 
-  it('rejects duplicate registration by email or phone', async () => {
+  it('rejects duplicate registration by email', async () => {
     const d = deps();
     d.prisma.user.findFirst.mockResolvedValue({ id: 1 });
     await expect(
@@ -149,7 +147,7 @@ describe('AuthService', () => {
         email: user().email,
         password: 'Password1!',
         fullName: 'A',
-        phone: '0901234567',
+        passwordConfirmation: 'Password1!',
       }),
     ).rejects.toBeInstanceOf(ConflictException);
   });
@@ -163,7 +161,7 @@ describe('AuthService', () => {
         email: 'new@example.com',
         password: 'Password1!',
         fullName: 'A',
-        phone: '0901234567',
+        passwordConfirmation: 'Password1!',
       }),
     ).resolves.toEqual({
       status: 'PENDING_VERIFICATION',
@@ -275,8 +273,6 @@ describe('AuthService', () => {
     },
   );
 
-  // Hồi quy: rememberMe phải kéo dài CẢ AuthSession.expiresAt LẪN TTL của JWT refresh.
-  // Trước fix, JWT luôn 7 ngày trong khi DB session 30 ngày -> ngày thứ 8 phiên chết sớm.
   it('applies rememberMe to both the session expiry and the refresh JWT TTL', async () => {
     const d = deps();
     const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
@@ -289,7 +285,6 @@ describe('AuthService', () => {
     });
 
     const sessionExpiry = d.prisma.authSession.create.mock.calls[0][0].data.expiresAt as Date;
-    // 30 ngày cho rememberMe (cho phép sai số 5 giây khi test chạy).
     expect(sessionExpiry.getTime() - before).toBeGreaterThan(30 * 86_400_000 - 5_000);
 
     const refreshSignOptions = d.jwt.sign.mock.calls.at(-1)?.[1] as { expiresIn: number };
@@ -325,7 +320,6 @@ describe('AuthService', () => {
     const d = deps();
     const hash = await argon2.hash('MatKhauMinhHoa!2026', { type: argon2.argon2id });
     d.prisma.user.findUnique.mockResolvedValue(user({ passwordHash: hash }));
-    // Audit là quan sát: lỗi ghi audit không được làm hỏng phiên đăng nhập đã tạo.
     d.prisma.auditLog.create.mockRejectedValueOnce(new Error('audit table down'));
     await expect(
       d.service.login({ identifier: user().email, password: 'MatKhauMinhHoa!2026' }),
@@ -400,11 +394,9 @@ describe('AuthService', () => {
     );
   });
 
-  // Hồi quy: xoay token KHÔNG được cộng thêm TTL đầy đủ, nếu không phiên sẽ sống vô hạn
-  // dù AuthSession.expiresAt vẫn là mốc tuyệt đối ban đầu.
   it('keeps the absolute session deadline when rotating (no TTL extension)', async () => {
     const d = deps();
-    const sessionExpiry = new Date(Date.now() + 60_000); // còn đúng 60 giây
+    const sessionExpiry = new Date(Date.now() + 60_000);
     d.jwt.verify.mockReturnValue({ sub: '1', tokenId: '10', type: 'refresh' });
     d.prisma.authSession.findUnique.mockResolvedValue(
       authSessionRecord({ expiresAt: sessionExpiry }),
@@ -413,10 +405,8 @@ describe('AuthService', () => {
     await d.service.refreshTokens('1', 'jwt-refresh', '10');
 
     const refreshSignOptions = d.jwt.sign.mock.calls.at(-1)?.[1] as { expiresIn: number };
-    // Chỉ còn ~60 giây, tuyệt đối không phải 7 ngày.
     expect(refreshSignOptions.expiresIn).toBeLessThanOrEqual(60);
     expect(refreshSignOptions.expiresIn).toBeGreaterThan(0);
-    // Và không được đẩy expiresAt của phiên ra xa hơn.
     expect(d.tx.authSession.updateMany.mock.calls[0][0].data).not.toHaveProperty('expiresAt');
   });
 
@@ -502,7 +492,6 @@ describe('AuthService', () => {
     });
   });
 
-  // --- Hồi quy cho OWASP Anti-User Enumeration: response bất biến dù email có tồn tại hay không. ---
   it('issues a fresh VERIFY_EMAIL token on resend when the account is unverified', async () => {
     const d = deps();
     d.prisma.user.findUnique.mockResolvedValue(
@@ -514,7 +503,6 @@ describe('AuthService', () => {
       status: 'ACCEPTED',
       message: 'Yêu cầu gửi lại email xác thực đã được ghi nhận.',
     });
-    // Mã cũ bị thu hồi rồi mới phát mã mới, để chỉ tồn tại một mã hiệu lực.
     expect(d.tx.authToken.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { revokedAt: expect.any(Date) } }),
     );
@@ -553,7 +541,6 @@ describe('AuthService', () => {
       status: 'ACCEPTED',
       message: 'Yêu cầu gửi lại email xác thực đã được ghi nhận.',
     });
-    // Tài khoản bị khoá không được kích hoạt lại qua luồng gửi lại email.
     expect(d.tx.authToken.create).not.toHaveBeenCalled();
   });
 

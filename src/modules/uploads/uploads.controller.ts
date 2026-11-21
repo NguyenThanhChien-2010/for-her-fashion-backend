@@ -22,9 +22,6 @@ import {
 } from '../../common/swagger/api-contract.docs';
 import { UploadPurposeDto } from './dto/upload-purpose.dto';
 
-// POST /uploads — hạ tầng tệp dùng chung (tag Shared), không phải module nghiệp vụ.
-// Contract: JPG/PNG tối đa 5 MB, mọi role đã đăng nhập đều dùng được, tệp mặc định PRIVATE.
-// Schema Leader: model File(storageKey, originalName, mimeType, sizeBytes, uploadedBy, purpose).
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png'] as const;
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
@@ -37,9 +34,9 @@ export class UploadsController {
     private readonly prisma: PrismaService,
   ) {}
 
+  // API: POST /uploads
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  // Multer chạy trước pipe nên req.body đã có purpose khi UploadPurposeDto được validate.
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } }),
   )
@@ -94,7 +91,6 @@ export class UploadsController {
         select: { id: true, purpose: true, mimeType: true, sizeBytes: true },
       });
       return {
-        // Contract công bố id dạng chuỗi số dù DB lưu Int autoincrement.
         id: String(created.id),
         purpose: created.purpose as UploadDto['purpose'],
         mimeType: created.mimeType as 'image/jpeg' | 'image/png',
@@ -102,7 +98,7 @@ export class UploadsController {
         access: 'PRIVATE',
       };
     } catch (error) {
-      // Không để tệp mồ côi trên đĩa khi ghi metadata thất bại.
+      // Dọn file nếu ghi metadata thất bại.
       await this.fileUpload.remove(stored.storedPath);
       throw error;
     }

@@ -16,8 +16,6 @@ export interface JwtPayload {
   exp?: number;
 }
 
-// Passport strategy xác thực access token và luôn tải trạng thái user mới nhất từ DB.
-// Schema Leader: User.id là Int, trạng thái khóa là LOCKED, xác thực email là emailVerifiedAt.
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(
@@ -56,6 +54,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
     const userId = Number(claims.sub);
     const sessionId = Number(claims.sid);
+    // Đọc trạng thái mới nhất để khóa tài khoản có hiệu lực với token cũ.
     const session = await this.prisma.authSession.findUnique({
       where: { id: sessionId },
       select: { userId: true, revokedAt: true, expiresAt: true },
@@ -78,11 +77,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       throw new UnauthorizedException('Account is not active or email is not verified');
     }
 
-    // Loại passwordHash khỏi payload trước khi controller dùng user.
     const safeUser = Object.fromEntries(
       Object.entries(user).filter(([key]) => key !== 'passwordHash'),
     ) as Omit<typeof user, 'passwordHash'>;
-    // Chỉ phiên còn hiệu lực mới tới được controller; sid này được dùng khi logout.
     return { ...safeUser, sessionId: claims.sid };
   }
 }

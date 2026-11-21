@@ -2,7 +2,6 @@ import { applyDecorators } from '@nestjs/common';
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, Length, Matches } from 'class-validator';
 
-// Password policy dùng chung cho register/reset/change: 8-128 ký tự, đủ hoa/thường/số/ký hiệu.
 export function StrongPassword(): PropertyDecorator {
   return applyDecorators(
     ApiProperty({ example: 'StrongPass@123', minLength: 8, maxLength: 128 }),

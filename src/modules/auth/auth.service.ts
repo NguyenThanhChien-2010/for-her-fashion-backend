@@ -32,8 +32,6 @@ const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
 const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// M01 sở hữu identity, vòng đời phiên và chính sách mật khẩu.
-// Ánh xạ theo schema Leader: User (Int id, fullName, emailVerifiedAt) / AuthSession / AuthToken.
 @Injectable()
 export class AuthService {
   constructor(
@@ -44,19 +42,17 @@ export class AuthService {
     private readonly logger: PinoLogger,
   ) {}
 
-  // POST /auth/register — tạo tài khoản chờ xác thực (emailVerifiedAt = null), mã hạn 24 giờ.
   async register(dto: RegisterDto): Promise<ActionResult> {
     const email = dto.email.trim().toLowerCase();
-    const phone = dto.phone.trim();
     const existing = await this.prisma.user.findFirst({
-      where: { OR: [{ email }, { phone }] },
+      where: { email },
       select: { id: true },
     });
     if (existing) {
       throw new ConflictException(
         apiErrorPayload(
           ErrorCode.CONFLICT,
-          'Email hoặc số điện thoại đã được đăng ký.',
+          'Email đã được đăng ký.',
         ),
       );
     }
@@ -72,10 +68,8 @@ export class AuthService {
           email,
           passwordHash,
           fullName: dto.fullName.trim(),
-          phone,
           role: UserRole.CUSTOMER,
           status: UserStatus.ACTIVE,
-          // Chờ xác thực biểu diễn bằng emailVerifiedAt null, không dùng status riêng.
           emailVerifiedAt: null,
         },
         select: { id: true },
@@ -91,6 +85,7 @@ export class AuthService {
       });
     });
 
+    // Bộ gửi email nhận token thô; database chỉ lưu hash.
     this.events.emit('auth.email_verification', { userId, token: rawToken });
     this.logger.info({ userId }, 'User registered');
     return {
@@ -99,7 +94,6 @@ export class AuthService {
     };
   }
 
-  // POST /auth/email-verifications/confirm — kích hoạt và tiêu thụ mã trong cùng giao dịch.
   async confirmEmail(rawToken: string): Promise<ActionResult> {
     const tokenHash = this.hashToken(rawToken);
     const record = await this.prisma.authToken.findUnique({
@@ -133,7 +127,6 @@ export class AuthService {
           ),
         );
       }
-      // Xác thực email không đổi status; tài khoản LOCKED vẫn bị chặn đăng nhập.
       const verified = await tx.user.updateMany({
         where: { id: record.userId },
         data: { emailVerifiedAt: new Date() },
@@ -151,8 +144,8 @@ export class AuthService {
     return { status: 'COMPLETED', message: 'Xác thực email thành công.' };
   }
 
-  // POST /auth/email-verifications/resend — luôn 202 ACCEPTED, không tiết lộ email có tồn tại.
   async resendEmailVerification(dto: EmailRequestDto): Promise<ActionResult> {
+    // Dùng cùng phản hồi dù email có tồn tại hay không.
     const response: ActionResult = {
       status: 'ACCEPTED',
       message: 'Yêu cầu gửi lại email xác thực đã được ghi nhận.',
@@ -162,11 +155,9 @@ export class AuthService {
       where: { email },
       select: { id: true, emailVerifiedAt: true, status: true },
     });
-    // Chỉ tài khoản chưa xác thực và không bị khoá mới thực sự nhận mã mới.
     if (user && !user.emailVerifiedAt && user.status !== UserStatus.LOCKED) {
       const rawToken = randomBytes(32).toString('hex');
       await this.prisma.$transaction(async (tx) => {
-        // Mã cũ bị vô hiệu ngay khi phát mã mới để chỉ tồn tại một mã hiệu lực.
         await tx.authToken.updateMany({
           where: {
             userId: user.id,
@@ -190,7 +181,6 @@ export class AuthService {
     return response;
   }
 
-  // POST /auth/login — identifier nhận email hoặc số điện thoại; rememberMe kéo dài refresh TTL.
   async login(
     dto: LoginDto,
     deviceInfo?: string,
@@ -229,7 +219,6 @@ export class AuthService {
     return tokens;
   }
 
-  // POST /admin/auth/login — chỉ STAFF/ADMIN; CUSTOMER bị chặn 403 theo contract.
   async adminLogin(
     dto: LoginDto,
     deviceInfo?: string,
@@ -268,7 +257,6 @@ export class AuthService {
     return tokens;
   }
 
-  // POST /auth/refresh — xoay token theo đúng session id, phát hiện replay và thu hồi toàn bộ phiên.
   async refreshTokens(
     userId: string,
     refreshToken: string,
@@ -316,6 +304,7 @@ export class AuthService {
       stored.revokedAt ||
       stored.refreshTokenHash !== this.hashToken(refreshToken)
     ) {
+      // Token không còn hợp lệ trong session sẽ thu hồi mọi phiên của tài khoản.
       return this.rejectRefreshReplay(numericUserId);
     }
     if (stored.user.status === UserStatus.LOCKED) {
@@ -327,8 +316,7 @@ export class AuthService {
       );
     }
 
-    // Xoay token giữ nguyên thời hạn tuyệt đối của phiên (AuthSession.expiresAt không đổi),
-    // nên refresh JWT mới chỉ sống bằng phần thời gian còn lại thay vì cộng thêm TTL đầy đủ.
+    // Token mới vẫn hết hạn theo mốc gốc của session.
     const remainingTtlMs = stored.expiresAt.getTime() - Date.now();
     const accessToken = this.signAccess(stored.user, String(stored.id));
     const replacement = this.signRefresh(
@@ -337,9 +325,8 @@ export class AuthService {
       remainingTtlMs,
     );
 
+    // So sánh hash cũ để chỉ một request refresh đồng thời thắng.
     const rotationSucceeded = await this.prisma.$transaction(async (tx) => {
-      // Xoay tại chỗ trên cùng AuthSession: đổi hash refresh token + đánh dấu rotatedAt.
-      // Điều kiện refreshTokenHash cũ bảo đảm hai request song song chỉ một bên thắng.
       const rotated = await tx.authSession.updateMany({
         where: {
           id: sessionId,
@@ -367,7 +354,6 @@ export class AuthService {
     };
   }
 
-  // POST /auth/logout — 204 No Content; thu hồi đúng phiên gắn với access token hiện tại.
   async logout(userId: string, sessionId?: string): Promise<void> {
     const numericUserId = this.parseUserId(userId);
     if (numericUserId === null) return;
@@ -385,7 +371,6 @@ export class AuthService {
       });
       return;
     }
-    // Access token cũ không có sid: thu hồi toàn bộ phiên để đăng xuất có hiệu lực.
     await this.prisma.authSession.updateMany({
       where: { userId: numericUserId, revokedAt: null },
       data: { revokedAt: new Date() },
@@ -398,7 +383,6 @@ export class AuthService {
     });
   }
 
-  // POST /auth/password/forgot — luôn 202 ACCEPTED; mã đặt lại hạn 30 phút.
   async forgotPassword(dto: EmailRequestDto): Promise<ActionResult> {
     const response: ActionResult = {
       status: 'ACCEPTED',
@@ -430,12 +414,12 @@ export class AuthService {
           },
         });
       });
+      // Bộ gửi email nhận token thô; database chỉ lưu hash.
       this.events.emit('auth.password_reset', { userId: user.id, token: rawToken });
     }
     return response;
   }
 
-  // POST /auth/password/reset — đổi mật khẩu, tiêu thụ mã và thu hồi phiên cũ trong cùng giao dịch.
   async resetPassword(dto: ResetPasswordDto): Promise<ActionResult> {
     if (dto.password !== dto.passwordConfirmation) {
       throw new BadRequestException(
@@ -464,6 +448,7 @@ export class AuthService {
     }
 
     const hash = await this.hashPassword(dto.password);
+    // Đổi mật khẩu, tiêu thụ token và thu hồi phiên phải cùng thành công.
     await this.prisma.$transaction(async (tx) => {
       const consumed = await tx.authToken.updateMany({
         where: { id: record.id, usedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
@@ -497,7 +482,6 @@ export class AuthService {
     return { status: 'COMPLETED', message: 'Đặt mật khẩu mới thành công.' };
   }
 
-  // GET /me — Account của chính người dùng đang đăng nhập.
   async getAccount(userId: string): Promise<AccountResponse> {
     const numericUserId = this.parseUserId(userId);
     if (numericUserId === null) {
@@ -514,10 +498,8 @@ export class AuthService {
     return this.toAccount(user);
   }
 
-  // Ánh xạ entity -> AccountResponse; không bao giờ trả passwordHash hay token.
   toAccount(user: User): AccountResponse {
     return {
-      // Contract quy định id là chuỗi số dương; String() tương đương helper cũ.
       id: String(user.id),
       fullName: user.fullName,
       email: user.email,
@@ -531,7 +513,6 @@ export class AuthService {
 
   private findUserByIdentifier(identifier: string): Promise<User | null> {
     const value = identifier.trim();
-    // Số điện thoại và email có miền giá trị khác nhau nên thử đúng một nhánh cho mỗi request.
     if (value.includes('@')) {
       return this.prisma.user.findUnique({ where: { email: value.toLowerCase() } });
     }
@@ -557,9 +538,6 @@ export class AuthService {
     }
   }
 
-  // Tạo phiên mới: lưu hash refresh token vào AuthSession.
-  // Session id (Int, autoincrement) chỉ có sau khi insert, nên insert trước rồi mới ký
-  // cặp token có sid = session.id; hash được ghi lại đúng theo token cuối cùng phát ra.
   private async issueTokens(
     user: User,
     options: { deviceInfo?: string; ipAddress?: string; rememberMe: boolean },
@@ -569,7 +547,6 @@ export class AuthService {
     const session = await this.prisma.authSession.create({
       data: {
         userId: user.id,
-        // Giá trị tạm hợp lệ về kiểu; được thay bằng hash thật ngay sau khi biết session.id.
         refreshTokenHash: this.hashToken(randomUUID()),
         expiresAt,
       },
@@ -577,7 +554,6 @@ export class AuthService {
     });
 
     const accessToken = this.signAccess(user, String(session.id));
-    // JWT refresh phải sống đúng bằng AuthSession.expiresAt; rememberMe quyết định TTL 7 hay 30 ngày.
     const refreshToken = this.signRefresh(
       String(user.id),
       String(session.id),
@@ -605,7 +581,6 @@ export class AuthService {
   }
 
   private async rejectRefreshReplay(userId: number): Promise<never> {
-    // Revoke after the rotation transaction completes so the revocation is not rolled back.
     await this.revokeActiveSessions(userId);
     throw new UnauthorizedException(
       apiErrorPayload(
@@ -660,9 +635,6 @@ export class AuthService {
     );
   }
 
-  // TTL của JWT refresh phải khớp thời hạn còn lại của AuthSession.
-  // rememberMe chỉ áp dụng khi tạo phiên; lúc xoay token dùng remaining TTL để không kéo dài phiên vô hạn
-  // và cũng không làm phiên ngắn hơn thời hạn DB đã cam kết.
   private signRefresh(userId: string, tokenId: string, ttlMs: number): string {
     return this.jwtService.sign(
       { sub: userId, tokenId, type: 'refresh' } satisfies JwtRefreshPayload,
@@ -674,8 +646,6 @@ export class AuthService {
     );
   }
 
-  // Ghi AuditLog cho thao tác bảo mật nhạy cảm (NV7). Không ném lỗi nếu ghi audit thất bại:
-  // audit là quan sát, không được phép làm hỏng nghiệp vụ chính đã commit thành công.
   private async writeAuditLog(entry: {
     actorId?: number | null;
     action: string;
@@ -696,6 +666,7 @@ export class AuthService {
         },
       });
     } catch (error) {
+      // Audit lỗi không làm đảo ngược nghiệp vụ đã hoàn tất.
       this.logger.warn(
         { action: entry.action, entityId: entry.entityId, error: String(error) },
         'Failed to write audit log',
@@ -713,7 +684,6 @@ export class AuthService {
     return this.parseUserId(value);
   }
 
-  // expiresIn của contract là số giây thực tế M01 cấu hình (ví dụ 900).
   private accessTtlSeconds(): number {
     return this.parseDurationSeconds(
       this.config.get<string>('JWT_ACCESS_EXPIRES_IN', '15m'),

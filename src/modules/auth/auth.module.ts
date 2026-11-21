@@ -10,9 +10,6 @@ import { MeController } from './me.controller';
 import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
-// Đóng gói M01 trên nền Leader: PrismaModule (@Global) đã cung cấp PrismaService,
-// CommonModule (@Global) cung cấp FileUploadService + IdempotencyService.
-// JwtModule.register({}) để AuthService tự truyền secret theo từng loại token.
 @Module({
   imports: [PassportModule.register({ defaultStrategy: 'jwt' }), JwtModule.register({})],
   controllers: [AuthController, MeController, AdminAuthController, AdminAccountsController],

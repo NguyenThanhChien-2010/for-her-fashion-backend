@@ -4,18 +4,11 @@ import { PrismaService, PrismaTransactionClient } from '../database/prisma.servi
 
 class DuplicateClaimError extends Error {}
 
-// Shared anti-duplicate service, port sang IdempotencyKey của schema Leader:
-//   key + subjectKey + scope (unique), state PROCESSING|COMPLETED, response Json?, expiresAt.
-// BE-04/BE-05 dùng execute(...) cho checkout hoặc IPN; side effect ngoài DB phải qua outbox.
 @Injectable()
 export class IdempotencyService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * All business database writes must use tx. External calls, emails and file
-   * writes cannot roll back: enqueue an outbox record in tx for those effects.
-   * Callbacks must return JSON data, without Dates, undefined or class instances.
-   */
+  /** Ghi nghiệp vụ qua tx; side effect ngoài DB cần đi qua outbox. Kết quả phải là JSON. */
   async execute<T extends Prisma.JsonValue>(
     subjectKey: string,
     key: string,
@@ -28,7 +21,7 @@ export class IdempotencyService {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const now = new Date();
-        // Conditional deletion serializes expiration with the unique-key claim.
+        // Xóa key hết hạn trước khi chiếm key mới.
         await tx.idempotencyKey.deleteMany({
           where: { subjectKey, scope, key, expiresAt: { lte: now } },
         });
@@ -51,7 +44,7 @@ export class IdempotencyService {
             },
           })
           .catch((error: unknown) => {
-            // Only a unique violation from this insert represents another owner.
+            // P2002 tại đây nghĩa là request khác đã chiếm key.
             if (this.isPrismaError(error, 'P2002')) throw new DuplicateClaimError();
             throw error;
           });
@@ -69,7 +62,7 @@ export class IdempotencyService {
       });
     } catch (error) {
       if (error instanceof DuplicateClaimError) {
-        // Read after rollback, outside the failed transaction's old snapshot.
+        // Đọc ngoài transaction lỗi để lấy kết quả của request thắng.
         const existing = await this.prisma.idempotencyKey.findUnique({ where });
         if (existing && existing.state !== 'PROCESSING' && existing.expiresAt > new Date()) {
           return existing.response as T;

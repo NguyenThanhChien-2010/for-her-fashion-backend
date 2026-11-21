@@ -1,10 +1,5 @@
-// For Her Fashion - Task 1-4. Prisma 6.x, MySQL 8.x.
-// Cần migration và đối chiếu dữ liệu cũ trước triển khai.
-// Ràng buộc quyền, chuyển trạng thái và số lượng kiểm tra tại service trong giao dịch.
-// Ghi chú đơn kiểm thử: Đơn Test - HKDN | Nhờ các chị không chuyển thành hóa đơn ạ.
-// Database schema - website bán hàng thời trang
-// NestJS + Prisma + MySQL (modular monolith: M01-M14 + P)
 
+// Schema MySQL dùng chung, chia model theo module nghiệp vụ.
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,8 +8,6 @@ datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
 }
-
-// - Enums -
 
 enum UserRole {
   CUSTOMER
@@ -139,24 +132,23 @@ enum ReconciliationStatus {
   MISMATCHED
 }
 
-// - M01 Tài khoản và phân quyền -
-
+// M01: Tài khoản, phiên đăng nhập và phân quyền.
 model User {
   version          Int               @default(1)
   sessions         AuthSession[]
   checkoutContexts CheckoutContext[]
-  // Chờ xác thực được xác định bằng emailVerifiedAt, độc lập trạng thái khóa.
 
   id              Int        @id @default(autoincrement())
   email           String     @unique @db.VarChar(191)
   passwordHash    String     @db.VarChar(255)
   fullName        String     @db.VarChar(150)
-  phone           String?    @unique @db.VarChar(20) // chuẩn hóa trước kiểm tra trùng
+  phone           String?    @unique @db.VarChar(20)
   role            UserRole   @default(CUSTOMER)
   status          UserStatus @default(ACTIVE)
+  // Trạng thái xác thực email độc lập với trạng thái khóa tài khoản.
   emailVerifiedAt DateTime?
   lockedReason    String?    @db.VarChar(255)
-  createdBy       Int? // Admin tạo tài khoản nội bộ (FR-ADM-06.4)
+  createdBy       Int?
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
@@ -192,8 +184,7 @@ model AuthToken {
   @@map("auth_tokens")
 }
 
-// - M02 Danh mục và sản phẩm -
-
+// M02: Danh mục, sản phẩm và biến thể.
 model Category {
   sizeChartId         Int?
   sizeChartDefinition SizeChart? @relation("CategorySizeChart", fields: [sizeChartId], references: [id])
@@ -250,7 +241,7 @@ model Product {
   categoryId  Int
   name        String        @db.VarChar(255)
   slug        String        @unique @db.VarChar(255)
-  baseCode    String        @unique @db.VarChar(40) // SKU = baseCode + hậu tố màu + hậu tố size
+  baseCode    String        @unique @db.VarChar(40)
   description String?       @db.Text
   price       Decimal       @db.Decimal(12, 0)
   status      ProductStatus @default(DRAFT)
@@ -281,7 +272,7 @@ model ProductVariant {
   colorId   Int
   sizeCode  String   @db.VarChar(10)
   sku       String   @unique @db.VarChar(80)
-  price     Decimal? @db.Decimal(12, 0) // null = dùng giá sản phẩm
+  price     Decimal? @db.Decimal(12, 0)
   isActive  Boolean  @default(true)
 
   product    Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -315,7 +306,7 @@ model SizeChartRow {
   id           Int    @id @default(autoincrement())
   chartId      Int
   sizeCode     String @db.VarChar(10)
-  measurements Json // ví dụ { "ngực": 88, "eo": 70, "dài": 60 } (cm)
+  measurements Json
 
   chart SizeChart @relation(fields: [chartId], references: [id], onDelete: Cascade)
   size  Size      @relation(fields: [sizeCode], references: [code])
@@ -324,17 +315,16 @@ model SizeChartRow {
   @@map("size_chart_rows")
 }
 
-// - M03 Tồn kho theo SKU -
-
+// M03: Tồn kho theo biến thể và lịch sử điều chỉnh.
 model Inventory {
   version         Int       @default(1)
-  sourceQuantity  Int? // null = nguồn chưa được xác nhận
+  sourceQuantity  Int?
   lastConfirmedAt DateTime?
   sourceVersion   String?   @db.VarChar(100)
   syncStatus      SyncState @default(PENDING)
-  // quantity là tồn bán web, gồm ảnh hưởng của các pendingEffects chưa được nguồn ghi nhận.
 
   variantId Int      @id
+  // Tồn bán web đã tính cả điều chỉnh đang chờ nguồn ngoài xác nhận.
   quantity  Int      @default(0)
   updatedAt DateTime @updatedAt
 
@@ -350,9 +340,9 @@ model InventoryMovement {
 
   id        Int             @id @default(autoincrement())
   variantId Int
-  delta     Int // âm = trừ tồn, dương = cộng/hoàn tồn
+  delta     Int
   reason    InventoryReason
-  refType   String?         @db.VarChar(30) // order | return | adjust
+  refType   String?         @db.VarChar(30)
   refId     Int?
   note      String?         @db.VarChar(255)
   createdBy Int?
@@ -365,8 +355,7 @@ model InventoryMovement {
   @@map("inventory_movements")
 }
 
-// - M04 Giỏ hàng và yêu thích -
-
+// M04: Giỏ hàng, mua ngay và yêu thích.
 model Cart {
   version Int @default(1)
 
@@ -396,7 +385,7 @@ model CartItem {
   @@map("cart_items")
 }
 
-// "Mua ngay" dùng phiên mua riêng, không đổi giỏ hiện có
+// Mua ngay có phiên riêng, không thay đổi giỏ hàng hiện tại.
 model BuyNowSession {
   id        Int      @id @default(autoincrement())
   userId    Int
@@ -424,8 +413,7 @@ model WishlistItem {
   @@map("wishlist_items")
 }
 
-// - M05 Mã ưu đãi -
-
+// M05: Mã ưu đãi.
 model Voucher {
   version Int @default(1)
 
@@ -433,7 +421,7 @@ model Voucher {
   code           String       @unique @db.VarChar(40)
   discountType   DiscountType
   discountValue  Decimal      @db.Decimal(12, 2)
-  maxDiscount    Decimal?     @db.Decimal(12, 0) // mức giảm tối đa
+  maxDiscount    Decimal?     @db.Decimal(12, 0)
   minOrderAmount Decimal      @default(0) @db.Decimal(12, 0)
   startsAt       DateTime
   endsAt         DateTime
@@ -445,14 +433,13 @@ model Voucher {
   @@map("vouchers")
 }
 
-// - M06 Đơn hàng -
-
+// M06: Đơn hàng và lịch sử trạng thái.
 model Order {
   sourceInvoices SourceInvoice[]
 
   version                 Int                     @default(1)
   deliveryStatus          DeliveryStatus          @default(NOT_SHIPPED)
-  paymentExpiresAt        DateTime? // hạn gốc 15 phút từ tạo đơn MoMo, thử lại không gia hạn
+  paymentExpiresAt        DateTime?
   deliveredAt             DateTime?
   deliveryUnsuccessfulAt  DateTime?
   promotionType           PromotionType           @default(NONE)
@@ -471,9 +458,10 @@ model Order {
   id             Int           @id @default(autoincrement())
   code           String        @unique @db.VarChar(30)
   userId         Int
-  status         String        @db.VarChar(40) // trạng thái đơn (máy trạng thái ở M06), xem bảng trạng thái
+  status         String        @db.VarChar(40)
   paymentMethod  PaymentMethod
-  paymentStatus  PaymentStatus @default(UNPAID) // tách riêng với trạng thái đơn
+  // Trạng thái đơn và trạng thái thanh toán thay đổi độc lập.
+  paymentStatus  PaymentStatus @default(UNPAID)
   subtotal       Decimal       @db.Decimal(12, 0)
   shippingFee    Decimal       @default(30000) @db.Decimal(12, 0)
   discountAmount Decimal       @default(0) @db.Decimal(12, 0)
@@ -482,15 +470,15 @@ model Order {
   voucherCode    String?       @db.VarChar(40)
   shipName       String        @db.VarChar(150)
   shipPhone      String        @db.VarChar(20)
-  shipEmail      String        @db.VarChar(191) // email nhận xác nhận đơn (M13)
+  shipEmail      String        @db.VarChar(191)
   shipAddress    String        @db.VarChar(255)
   shipWard       String?       @db.VarChar(100)
   shipDistrict   String?       @db.VarChar(100)
   shipProvince   String        @db.VarChar(100)
-  shipPostalCode String?       @db.VarChar(10) // mã bưu điện
+  shipPostalCode String?       @db.VarChar(10)
   note           String?       @db.VarChar(500)
   cancelReason   String?       @db.VarChar(255)
-  idempotencyKey String?       @db.VarChar(128) // tạo đơn đúng một lần
+  idempotencyKey String?       @db.VarChar(128)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -505,7 +493,6 @@ model Order {
   loyaltyEntries LoyaltyEntry[]
   returnRequests ReturnRequest[]
 
-  // Giao nhận, thanh toán và đổi trả độc lập. Đổi trả giữ trạng thái DELIVERED.
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
   @@index([status, createdAt])
@@ -513,16 +500,16 @@ model Order {
   @@map("orders")
 }
 
+// Snapshot giữ nguyên tên, SKU và giá tại thời điểm đặt hàng.
 model OrderItem {
   discountAmount      Decimal              @default(0) @db.Decimal(12, 0)
   netAmount           Decimal              @db.Decimal(12, 0)
-  // lineTotal = unitPrice * quantity; netAmount = lineTotal - discountAmount.
   deliveryReturnItems DeliveryReturnItem[]
 
   id          Int     @id @default(autoincrement())
   orderId     Int
   variantId   Int
-  productName String  @db.VarChar(255) // snapshot tại thời điểm mua
+  productName String  @db.VarChar(255)
   sku         String  @db.VarChar(80)
   colorName   String  @db.VarChar(60)
   sizeCode    String  @db.VarChar(10)
@@ -555,8 +542,7 @@ model OrderStatusHistory {
   @@map("order_status_history")
 }
 
-// - M07 Thanh toán -
-
+// M07: Giao dịch thanh toán và đối soát.
 model Payment {
   refundedAmount       Decimal @default(0) @db.Decimal(12, 0)
   reservedRefundAmount Decimal @default(0) @db.Decimal(12, 0)
@@ -567,7 +553,6 @@ model Payment {
   version                Int                         @default(1)
   refunds                Refund[]
   reconciliations        PaymentReconciliationCase[]
-  // Mỗi dòng là một lần thử/khoản thu thực tế. Timeout = UNKNOWN, cần tra cứu.
 
   id            Int               @id @default(autoincrement())
   orderId       Int
@@ -578,7 +563,7 @@ model Payment {
   momoRequestId String?           @db.VarChar(64)
   momoTransId   String?           @db.VarChar(64)
   payUrl        String?           @db.VarChar(500)
-  expiresAt     DateTime? // sao chép Order.paymentExpiresAt, thử lại không gia hạn
+  expiresAt     DateTime?
   paidAt        DateTime?
   rawResponse   Json?
   createdAt     DateTime          @default(now())
@@ -605,8 +590,7 @@ model PaymentReconciliation {
   @@map("payment_reconciliations")
 }
 
-// - M08 Tích hợp KiotViet -
-
+// M08: Liên kết đơn hàng với KiotViet và đồng bộ trạng thái.
 model KiotvietOrderLink {
   orderId         Int       @id
   kiotvietOrderId String?   @unique @db.VarChar(64)
@@ -622,7 +606,7 @@ model KiotvietOrderLink {
 model KiotvietStatusMapping {
   id             Int     @id @default(autoincrement())
   kiotvietStatus String  @unique @db.VarChar(40)
-  orderStatus    String  @db.VarChar(40) // trạng thái đơn nội bộ tương ứng
+  orderStatus    String  @db.VarChar(40)
   isActive       Boolean @default(true)
 
   @@map("kiotviet_status_mappings")
@@ -637,7 +621,7 @@ model SyncOutbox {
   attempts       Int          @default(0)
   nextRetryAt    DateTime?
   lastError      String?      @db.VarChar(500)
-  idempotencyKey String       @unique @db.VarChar(100) // đẩy đơn một lần
+  idempotencyKey String       @unique @db.VarChar(100)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -664,8 +648,7 @@ model SyncLog {
   @@map("sync_logs")
 }
 
-// - M09 Doanh số và hạng thành viên -
-
+// M09: Hạng thành viên, điểm và doanh số.
 model MembershipTier {
   regularDiscountPercent  Decimal         @db.Decimal(5, 2)
   birthdayDiscountPercent Decimal         @db.Decimal(5, 2)
@@ -673,7 +656,7 @@ model MembershipTier {
 
   id        Int     @id @default(autoincrement())
   name      String  @unique @db.VarChar(60)
-  minSpent  Decimal @db.Decimal(14, 0) // mốc 10 / 20 / 30 triệu
+  minSpent  Decimal @db.Decimal(14, 0)
   sortOrder Int     @default(0)
 
   members MemberProfile[]
@@ -696,7 +679,6 @@ model MemberProfile {
   accumulatedTier       MembershipTier? @relation("AccumulatedTier", fields: [accumulatedTierId], references: [id])
   version               Int             @default(1)
   birthdayUsages        BirthdayUsage[]
-  // points giữ lịch sử. Không đặt tỷ lệ tiền đổi điểm, không hạ hạng vì không giao dịch.
 
   userId     Int?     @unique
   tierId     Int?
@@ -710,6 +692,7 @@ model MemberProfile {
   @@map("member_profiles")
 }
 
+// Mỗi sự kiện nguồn chỉ được ghi nhận một lần.
 model LoyaltyEntry {
   memberProfileId Int
   memberProfile   MemberProfile @relation(fields: [memberProfileId], references: [id])
@@ -737,21 +720,20 @@ model LoyaltyEntry {
   user  User?  @relation(fields: [userId], references: [id])
   order Order? @relation(fields: [orderId], references: [id])
 
-  @@unique([sourceSystem, sourceEventKey]) // mỗi sự kiện nguồn ghi một lần
+  @@unique([sourceSystem, sourceEventKey])
   @@index([userId, createdAt])
   @@map("loyalty_entries")
 }
 
-// - M10 Đánh giá sản phẩm -
-
+// M10: Đánh giá gắn với sản phẩm đã mua.
 model Review {
   version Int @default(1)
 
   id          Int          @id @default(autoincrement())
   productId   Int
   userId      Int
-  orderItemId Int          @unique // mỗi dòng đơn đã nhận chỉ đánh giá một lần
-  rating      Int          @db.TinyInt // 1-5
+  orderItemId Int          @unique
+  rating      Int          @db.TinyInt
   content     String?      @db.Text
   status      ReviewStatus @default(PENDING)
   createdAt   DateTime     @default(now())
@@ -794,10 +776,9 @@ model ProductRatingStats {
   @@map("product_rating_stats")
 }
 
-// - M11 Đổi trả -
-
+// M11: Đổi trả; activeSlot giới hạn một yêu cầu đang xử lý cho mỗi đơn.
 model ReturnRequest {
-  activeSlot             Int?            @default(1) // đang xử lý = 1; kết thúc = null cùng giao dịch
+  activeSlot             Int?            @default(1)
   requestType            ReturnKind      @default(REFUND)
   kiotReturnDocumentId   String?         @db.VarChar(100)
   replacementKiotOrderId String?         @db.VarChar(100)
@@ -829,7 +810,7 @@ model ReturnRequest {
   @@map("return_requests")
 }
 
-// Số lượng hoàn trả theo từng dòng đơn (quantity <= số lượng đã mua, kiểm tra ở tầng ứng dụng)
+// Số lượng được nhận, duyệt và hoàn được kiểm tra lũy kế ở service.
 model ReturnRequestItem {
   approvedQuantity  Int                 @default(0)
   receivedQuantity  Int                 @default(0)
@@ -838,7 +819,6 @@ model ReturnRequestItem {
   reservedQuantity  Int                 @default(0)
   refundedNetAmount Decimal             @default(0) @db.Decimal(12, 0)
   receiptItems      ReturnReceiptItem[]
-  // Kiểm tra lũy kế mọi yêu cầu cùng orderItemId, không chỉ từng request.
 
   id          Int @id @default(autoincrement())
   requestId   Int
@@ -880,8 +860,7 @@ model ReturnHistory {
   @@map("return_history")
 }
 
-// - M12 Đặt may -
-
+// M12: Yêu cầu đặt may.
 model TailoringRequest {
   garmentType        String    @db.VarChar(150)
   quantity           Int
@@ -889,7 +868,6 @@ model TailoringRequest {
   kiotOrderCode      String?   @db.VarChar(100)
   kiotLinkVerifiedAt DateTime?
   completedAt        DateTime?
-  // DONE chỉ khi khách chốt và đơn KiotViet đã xác minh.
 
   version Int @default(1)
 
@@ -901,7 +879,7 @@ model TailoringRequest {
   phone       String          @db.VarChar(20)
   email       String?         @db.VarChar(191)
   description String          @db.Text
-  details     Json? // số đo, chất liệu, ngày cần... theo biểu mẫu
+  details     Json?
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
@@ -927,17 +905,16 @@ model TailoringHistory {
   @@map("tailoring_history")
 }
 
-// - M13 Thông báo -
-
+// M13: Mẫu thông báo và lịch sử gửi.
 model NotificationTemplate {
   versions NotificationTemplateVersion[]
 
   version Int @default(1)
 
   id        Int      @id @default(autoincrement())
-  code      String   @unique @db.VarChar(60) // ví dụ ORDER_CONFIRMED
+  code      String   @unique @db.VarChar(60)
   subject   String   @db.VarChar(255)
-  body      String   @db.Text // có biến {{orderCode}}, {{total}}...
+  body      String   @db.Text
   variables Json?
   isActive  Boolean  @default(true)
   updatedAt DateTime @updatedAt
@@ -971,8 +948,6 @@ model NotificationLog {
   @@index([status, sentAt])
   @@map("notification_logs")
 }
-
-// - P Dịch vụ nền -
 
 model File {
   purpose        String          @db.VarChar(40)
@@ -1012,7 +987,7 @@ model AuditLog {
 model SystemConfig {
   version Int @default(1)
 
-  key       String   @id @db.VarChar(100) // ví dụ shipping_fee, loyalty_rules
+  key       String   @id @db.VarChar(100)
   value     Json
   updatedBy Int?
   updatedAt DateTime @updatedAt
@@ -1021,14 +996,13 @@ model SystemConfig {
 }
 
 model IdempotencyKey {
-  // Giữ khóa tài chính bền vững, không xóa khi nghiệp vụ chưa kết thúc.
 
   id          BigInt   @id @default(autoincrement())
   key         String   @db.VarChar(128)
   subjectKey  String   @db.VarChar(100)
   state       String   @default("PROCESSING") @db.VarChar(30)
   resourceId  String?  @db.VarChar(100)
-  scope       String   @db.VarChar(191) // create_order | momo_ipn | kiotviet_webhook
+  scope       String   @db.VarChar(191)
   requestHash String?  @db.VarChar(64)
   response    Json?
   expiresAt   DateTime
@@ -1039,7 +1013,7 @@ model IdempotencyKey {
   @@map("idempotency_keys")
 }
 
-// Hàng đợi sự kiện nội bộ (transactional outbox): OrderCreated, PaymentSucceeded, ...
+// Outbox giúp phát sự kiện sau khi transaction nghiệp vụ đã commit.
 model EventOutbox {
   id            BigInt       @id @default(autoincrement())
   eventType     String       @db.VarChar(60)
@@ -1185,6 +1159,7 @@ enum RefundBasis {
   OVERPAYMENT
 }
 
+// Khoản hoàn giữ chỗ cho số tiền đã xác minh; thay đổi tài chính phải qua service.
 model Refund {
   id              Int             @id @default(autoincrement())
   orderId         Int
@@ -1209,8 +1184,6 @@ model Refund {
   attempts        RefundAttempt[]
   history         RefundHistory[]
 
-  // Khóa khoản thu khi giữ tiền. Tổng đã hoàn + đang giữ không vượt khoản thu đã xác minh.
-  // Kết quả chưa rõ giữ nguyên tiền giữ. Chỉ Admin duyệt/gửi lại/xác nhận thủ công.
   @@index([paymentId, status])
   @@map("refunds")
 }
@@ -1238,7 +1211,6 @@ model RefundAttempt {
   evidenceFile        File?             @relation(fields: [evidenceFileId], references: [id])
   history             RefundHistory[]
 
-  // Retry cùng lần gửi giữ mã và payload. Lần mới chỉ sau thất bại xác định.
   @@unique([refundId, attemptNo])
   @@map("refund_attempts")
 }
@@ -1279,6 +1251,7 @@ model PaymentReconciliationCase {
   @@map("payment_reconciliation_cases")
 }
 
+// Chính sách lưu theo phiên bản để đơn cũ giữ đúng quy tắc tại thời điểm tạo.
 model MembershipPolicy {
   id                        Int      @id @default(autoincrement())
   version                   Int      @unique
@@ -1287,11 +1260,10 @@ model MembershipPolicy {
   birthdayDaysAfter         Int      @default(15)
   unrankedBirthdayThreshold Decimal  @default(3000000) @db.Decimal(14, 0)
   unrankedBirthdayPercent   Decimal  @default(10) @db.Decimal(5, 2)
-  tierRules                 Json // LOYAL 10 triệu: 5/10%; VIP 20 triệu: 10/15%; SUPER_VIP 30 triệu: 15/20%
+  tierRules                 Json
   createdBy                 Int?
   createdAt                 DateTime @default(now())
 
-  // Bảo toàn chính sách từ 06/02/2023 và cơ chế tích lũy hiện hành.
   @@map("membership_policies")
 }
 
@@ -1302,14 +1274,15 @@ enum BirthdayUsageStatus {
   PENDING_VERIFICATION
 }
 
+// activeSlot cho phép mỗi khách chỉ giữ một ưu đãi sinh nhật trong năm.
 model BirthdayUsage {
   id              Int                 @id @default(autoincrement())
   profileId       Int
-  birthdayYear    Int // năm ngày sinh nhật, kể cả cửa sổ qua năm mới
+  birthdayYear    Int
   orderId         Int?                @unique
   sourceInvoiceId String?             @db.VarChar(100)
   status          BirthdayUsageStatus @default(HELD)
-  activeSlot      Int?                @default(1) // giữ/đã dùng/chờ xác minh = 1; giải phóng = null
+  activeSlot      Int?                @default(1)
   heldAt          DateTime            @default(now())
   usedAt          DateTime?
   releasedAt      DateTime?
@@ -1354,7 +1327,6 @@ model ReturnReceiptItem {
   receipt           ReturnReceipt     @relation(fields: [receiptId], references: [id])
   requestItem       ReturnRequestItem @relation(fields: [requestItemId], references: [id])
 
-  // 0 <= bán lại <= chấp nhận <= nhận. Giá trị hoàn không vượt tiền ròng dòng gốc.
   @@unique([receiptId, requestItemId])
   @@map("return_receipt_items")
 }
@@ -1389,7 +1361,7 @@ model CheckoutContext {
   id        Int             @id @default(autoincrement())
   userId    Int
   source    String          @db.VarChar(20)
-  items     Json // snapshot SKU/số lượng, không giữ tồn
+  items     Json
   expiresAt DateTime
   version   Int             @default(1)
   createdAt DateTime        @default(now())
@@ -1413,7 +1385,6 @@ model CheckoutQuote {
   context           CheckoutContext @relation(fields: [contextId], references: [id])
   order             Order?
 
-  // Tạo đơn tính lại tại backend. Tổng đổi yêu cầu khách xác nhận lại.
   @@map("checkout_quotes")
 }
 
@@ -1434,8 +1405,6 @@ model SourceInvoice {
   memberProfile    MemberProfile? @relation(fields: [memberProfileId], references: [id])
   webOrder         Order?         @relation(fields: [webOrderId], references: [id])
 
-  // Cùng hóa đơn xuất hiện ở web và nguồn chỉ ghi doanh số một lần.
-  // eligibleRevenue theo cơ chế hiện hành, không mặc định bằng tiền hàng ròng.
   @@unique([sourceSystem, sourceInvoiceId])
   @@index([memberProfileId, occurredAt])
   @@map("source_invoices")

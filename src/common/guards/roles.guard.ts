@@ -4,7 +4,6 @@ import { UserRole } from '@prisma/client';
 import { apiErrorPayload, ErrorCode } from '../errors/api-error';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 
-// Global RBAC guard; module chỉ khai báo @Roles(...) trên controller cần giới hạn quyền.
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
