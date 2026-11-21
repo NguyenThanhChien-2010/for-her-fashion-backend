@@ -21,9 +21,6 @@ import {
   resolveTraceId,
 } from '../interceptors/transform-response.interceptor';
 
-// Map mọi lỗi về đúng schema ApiError của API Contract v1.0.2:
-// { error: { code, message, details }, traceId } + header X-Request-ID.
-// Không bao giờ trả stack trace, tên bảng hay mã lỗi nội bộ của Prisma ra client.
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   constructor(private readonly logger: PinoLogger) {}
@@ -35,7 +32,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const mapped = this.mapException(exception);
     const traceId = resolveTraceId(request);
 
-    // Filter có thể chạy trước interceptor (ví dụ lỗi ở guard/pipe) nên phải tự set header.
+    // Giữ chi tiết nội bộ ở log, không gửi stack trace cho client.
     if (!response.headersSent) response.setHeader('X-Request-ID', traceId);
 
     this.logger.error(
@@ -114,7 +111,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? (body as Record<string, unknown>)
         : undefined;
 
-    // Lỗi đã được chuẩn hóa từ validationExceptionFactory hoặc service dùng apiErrorPayload.
     if (isApiErrorPayload(body)) {
       return {
         statusCode,
@@ -125,7 +121,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
       };
     }
 
-    // PayloadTooLargeException từ multer (file > 5 MB): contract dùng VALIDATION_ERROR cho lỗi đầu vào.
     if (statusCode === HttpStatus.PAYLOAD_TOO_LARGE) {
       return {
         statusCode,
@@ -136,8 +131,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
       };
     }
 
-    // BadRequestException mặc định của ValidationPipe: message là mảng string, không có field.
-    // Factory mới đã xử lý trường hợp này; nhánh dưới là lưới an toàn nếu có pipe khác ném mảng thô.
     const rawMessage = payload?.message;
     if (Array.isArray(rawMessage)) {
       return {
@@ -156,7 +149,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
     return {
       statusCode,
       code: mapped.code,
-      // Client nhận thông báo thân thiện; message gốc chỉ vào log để debug.
       message: mapped.message,
       details: [],
       internalDetail: `${exception.name}: ${detail}`,
@@ -186,7 +178,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
           message: ErrorMessage.NOT_FOUND,
         };
       case HttpStatus.CONFLICT:
-        // 409 mặc định hiếm khi là trùng khóa duy nhất (đã map riêng ở P2002); dùng thông báo trạng thái.
         return {
           code: ErrorCode.CONFLICT,
           message: ErrorMessage.CONFLICT_STATE,
@@ -271,7 +262,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
   }
 
-  // P2002 meta.target cho biết field trùng; chỉ trả tên field, không trả giá trị để tránh lộ dữ liệu.
   private uniqueTargetDetails(
     exception: Prisma.PrismaClientKnownRequestError,
   ): FieldErrorDetail[] {

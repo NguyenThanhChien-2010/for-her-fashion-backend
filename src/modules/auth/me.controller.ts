@@ -9,13 +9,13 @@ import {
 } from '../../common/swagger/api-contract.docs';
 import { AuthService } from './auth.service';
 
-// GET /me — tài khoản của chính người dùng đang đăng nhập (mọi role CUSTOMER/STAFF/ADMIN).
 @ApiTags('M01')
 @ApiBearerAuth('BearerAuth')
 @Controller('me')
 export class MeController {
   constructor(private readonly authService: AuthService) {}
 
+  // API: GET /me
   @Get()
   @ApiOperation({
     summary: 'Xem tài khoản hiện tại',

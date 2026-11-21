@@ -10,13 +10,13 @@ import {
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 
-// POST /admin/auth/login — chỉ STAFF/ADMIN; CUSTOMER bị chặn 403 theo API Contract v1.0.2.
 @ApiTags('M01')
 @Controller('admin/auth')
 export class AdminAuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
+  // API: POST /admin/auth/login
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

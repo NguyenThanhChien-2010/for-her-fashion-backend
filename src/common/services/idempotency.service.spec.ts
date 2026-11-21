@@ -56,7 +56,6 @@ describe('IdempotencyService', () => {
       where: { id: 1 },
       data: { state: 'COMPLETED', response: { id: 'order' }, resourceId: '201' },
     });
-    // Xóa claim hết hạn phải chạy trước khi chiếm khóa mới.
     expect(rows.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
       rows.create.mock.invocationCallOrder[0],
     );

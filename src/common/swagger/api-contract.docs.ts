@@ -8,10 +8,6 @@ import {
   getSchemaPath,
 } from '@nestjs/swagger';
 
-// Swagger response dùng đúng envelope của API Contract v1.0.2:
-// thành công -> { data, traceId }; lỗi -> { error: { code, message, details }, traceId }.
-// Mọi schema được khai báo một lần ở đây để controller không lặp lại khối cấu hình dài.
-
 export class FieldErrorDto {
   @ApiProperty({ example: 'email' })
   field!: string;
@@ -126,7 +122,6 @@ export class UploadDto {
   access!: 'PRIVATE' | 'PUBLIC_AFTER_APPROVAL';
 }
 
-// Bọc một model bất kỳ vào envelope { data, traceId } kèm header X-Request-ID.
 function successEnvelope(model: Type<unknown> | null): Record<string, unknown> {
   const dataSchema = model ? { $ref: getSchemaPath(model) } : { type: 'object' };
   return {
@@ -173,7 +168,6 @@ export function ApiNoContentResponse(
   );
 }
 
-// Một decorator cho mọi mã lỗi chuẩn để Swagger liệt kê đầy đủ và cùng một schema ApiError.
 export function ApiErrorResponses(
   ...statuses: number[]
 ): MethodDecorator & ClassDecorator {

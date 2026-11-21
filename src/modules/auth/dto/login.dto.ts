@@ -1,8 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsOptional, IsString, Length } from 'class-validator';
 
-// LoginRequest của contract: identifier nhận email hoặc số điện thoại, rememberMe kéo dài phiên.
-// additionalProperties: false => ValidationPipe whitelist + forbidNonWhitelisted chặn field lạ.
 export class LoginDto {
   @ApiProperty({
     description: 'Email hoặc số điện thoại đã đăng ký.',

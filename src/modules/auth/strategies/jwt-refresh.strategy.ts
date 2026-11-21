@@ -5,7 +5,6 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 type RefreshRequest = { body?: { refreshToken?: unknown } };
 
 @Injectable()
-// Strategy đọc refresh JWT từ body; AuthService tiếp tục kiểm tra hash/tokenId trong AuthSession.
 export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
   constructor(config: ConfigService) {
     super({

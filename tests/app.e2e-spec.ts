@@ -5,8 +5,6 @@ import type { App } from 'supertest/types';
 import { PrismaService } from '../src/modules/prisma/prisma.service';
 import { validationExceptionFactory } from '../src/common/errors/api-error';
 
-// Boot the real module graph; database is stubbed so the suite never touches data.
-// Mọi assertion bám API Contract v1.0.2: path /api/v1, envelope { data, traceId }, lỗi { error, traceId }.
 describe('Application and Auth HTTP contracts', () => {
   let app: INestApplication<App>;
 
@@ -96,7 +94,6 @@ describe('Application and Auth HTTP contracts', () => {
         email: 'a@example.com',
         phone: '0901234567',
         password: 'StrongPass@123',
-        role: 'ADMIN',
       })
       .expect(400);
   });
@@ -110,7 +107,6 @@ describe('Application and Auth HTTP contracts', () => {
   });
 
   it('keeps the legacy password-reset path out of the contract', async () => {
-    // Contract dùng /auth/password/forgot; path cũ phải 404 để Frontend không gọi nhầm.
     await request(app.getHttpServer())
       .post('/api/v1/auth/forgot-password')
       .send({ email: 'a@example.com' })

@@ -1,7 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEnum } from 'class-validator';
 
-// Mục đích tệp theo schema Upload của API Contract v1.0.2 (tag Shared).
 export const UPLOAD_PURPOSES = ['REVIEW', 'RETURN', 'PRODUCT', 'REFUND_EVIDENCE'] as const;
 
 export type UploadPurpose = (typeof UPLOAD_PURPOSES)[number];

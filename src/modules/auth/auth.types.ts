@@ -1,7 +1,5 @@
 import { Prisma, UserRole, UserStatus } from '@prisma/client';
 
-// Access/refresh payload contracts; strategies reject unknown type/sub/tokenId trước khi truy cập DB.
-// sid là id AuthSession (Int) được nhúng trong access token để /auth/logout thu hồi đúng phiên.
 export interface JwtPayload {
   sub: string;
   email: string;
@@ -19,11 +17,6 @@ export interface JwtRefreshPayload {
   iat?: number;
   exp?: number;
 }
-
-// ---------------------------------------------------------------------------------------------
-// Schema dùng chung theo API Contract v1.0.2 (tag M01 + Shared).
-// id trả ra dạng CHUỖI số để khớp pattern ^[1-9][0-9]*$ của contract dù DB lưu Int.
-// ---------------------------------------------------------------------------------------------
 
 export type AccountStatus = 'PENDING_VERIFICATION' | 'ACTIVE' | 'LOCKED';
 
@@ -64,8 +57,6 @@ export interface PaginatedAccounts {
   pagination: Pagination;
 }
 
-// Schema Leader: UserStatus chỉ có ACTIVE | LOCKED; trạng thái chờ xác thực suy ra từ emailVerifiedAt.
-// Contract vẫn công bố 3 giá trị nên PENDING_VERIFICATION được dựng lại ở tầng mapping.
 export function toContractStatus(user: {
   status: UserStatus;
   emailVerifiedAt: Date | null;
@@ -78,12 +69,8 @@ export function toDatabaseStatus(status: AccountStatus): UserStatus {
   return status === 'LOCKED' ? UserStatus.LOCKED : UserStatus.ACTIVE;
 }
 
-// Prisma model User kèm quan hệ cần cho AccountResponse.
 export type UserWithRelations = Prisma.UserGetPayload<{ include: Record<string, never> }>;
 
-// Id Int trả về dạng chuỗi số đúng contract (^[1-9]\d*$): dùng String(id) trực tiếp tại call site.
-
-// Chuyển id từ chuỗi contract sang Int cho truy vấn Prisma; ném lỗi nếu không phải số dương.
 export function parseContractId(value: string): number | null {
   if (!/^[1-9]\d*$/.test(value)) return null;
   const parsed = Number(value);

@@ -25,15 +25,13 @@ import {
 import { AdminAccountsService } from './admin-accounts.service';
 import { AccountQueryDto, AccountRoleUpdateDto, AccountStatusUpdateDto, InternalAccountCreateDto } from './dto/account.dto';
 
-// M01 — quản trị tài khoản.
-// Phạm vi quyền theo API Contract v1.0.2: GET cho ADMIN + STAFF (Staff chỉ thấy CUSTOMER),
-// POST/PATCH chỉ ADMIN. accountId công bố dạng chuỗi số (^[1-9][0-9]*$) khớp User.id Int autoincrement.
 @ApiTags('M01')
 @ApiBearerAuth('BearerAuth')
 @Controller('admin/accounts')
 export class AdminAccountsController {
   constructor(private readonly adminAccounts: AdminAccountsService) {}
 
+  // API: GET /admin/accounts
   @Get()
   @Roles(UserRole.ADMIN, UserRole.STAFF)
   @ApiOperation({
@@ -47,6 +45,7 @@ export class AdminAccountsController {
     return this.adminAccounts.list(query, { id: String(user.id), role: user.role });
   }
 
+  // API: POST /admin/accounts
   @Post()
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.CREATED)
@@ -72,6 +71,7 @@ export class AdminAccountsController {
     return this.adminAccounts.create(dto, idempotencyKey, { id: String(user.id) });
   }
 
+  // API: GET /admin/accounts/:accountId
   @Get(':accountId')
   @Roles(UserRole.ADMIN, UserRole.STAFF)
   @ApiOperation({
@@ -88,6 +88,7 @@ export class AdminAccountsController {
     return this.adminAccounts.findOne(accountId, { id: String(user.id), role: user.role });
   }
 
+  // API: PATCH /admin/accounts/:accountId/role
   @Patch(':accountId/role')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
@@ -110,6 +111,7 @@ export class AdminAccountsController {
     });
   }
 
+  // API: PATCH /admin/accounts/:accountId/status
   @Patch(':accountId/status')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)

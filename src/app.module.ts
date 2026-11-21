@@ -18,19 +18,16 @@ import { AuthModule } from './modules/auth/auth.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 
-// Composition root: giữ cấu trúc import của Leader (ConfigModule + PrismaModule + AuthModule),
-// bổ sung hạ tầng dùng chung M01 (CommonModule, UploadsModule) và các global cross-cutting.
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validationSchema: appConfigValidationSchema }),
     LoggerModule.forRoot({
       pinoHttp: {
-        // Không bao giờ ghi Authorization/Cookie vào log (chứa Bearer và refresh token).
+        // Không ghi token hoặc cookie vào log.
         redact: ['req.headers.authorization', 'req.headers.cookie'],
         autoLogging: false,
-        // Ưu tiên X-Request-ID của client/proxy, nếu không có thì sinh UUID; header set ngay tại đây
-        // để header và traceId trong body lỗi luôn khớp nhau.
         genReqId: (req: IncomingMessage, res: ServerResponse) => {
+          // Dùng cùng một mã cho header và log để lần theo request.
           const header = req.headers['x-request-id'];
           const incoming = Array.isArray(header) ? header[0] : header;
           const id =
@@ -43,7 +40,6 @@ import { UploadsModule } from './modules/uploads/uploads.module';
       },
     }),
     EventEmitterModule.forRoot({ wildcard: true, delimiter: '.', maxListeners: 20 }),
-    // Throttle toàn cục chống brute-force; route auth nhạy cảm siết riêng bằng @Throttle.
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     PrismaModule,
     CommonModule,
@@ -53,7 +49,6 @@ import { UploadsModule } from './modules/uploads/uploads.module';
   controllers: [AppController],
   providers: [
     AppService,
-    // Thứ tự guard: JwtAuthGuard → RolesGuard → ThrottlerGuard.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: ThrottlerGuard },

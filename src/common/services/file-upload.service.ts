@@ -5,8 +5,6 @@ import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { apiErrorPayload, ErrorCode } from '../errors/api-error';
 
-// Kết quả lưu tệp: đường dẫn tĩnh (tương đối) và tên lưu trên đĩa để ghi DB hoặc dọn khi lỗi.
-// Schema Leader dùng File.storageKey + originalName + mimeType + sizeBytes; storageKey chính là tên lưu.
 export interface StoredFile {
   url: string;
   storageKey: string;
@@ -16,11 +14,9 @@ export interface StoredFile {
 }
 
 export interface SaveFileOptions {
-  // Giới hạn loại tệp theo contract của endpoint gọi (ví dụ /uploads chỉ nhận JPG/PNG).
   allowedMimeTypes?: readonly ('image/jpeg' | 'image/png')[];
 }
 
-// Shared upload service: kiểm tra magic bytes trước khi lưu, chống giả MIME/đuôi file.
 @Injectable()
 export class FileUploadService {
   constructor(private readonly config: ConfigService) {}
@@ -80,7 +76,6 @@ export class FileUploadService {
     };
   }
 
-  // Dọn tệp vừa ghi khi bước ghi metadata thất bại, tránh rác trên đĩa.
   async remove(storedPath: string): Promise<void> {
     await unlink(storedPath).catch(() => undefined);
   }
@@ -88,6 +83,7 @@ export class FileUploadService {
   private detectImage(
     buffer: Buffer,
   ): { extension: string; mimeType: StoredFile['mimeType'] } | undefined {
+    // Dựa vào chữ ký file, không tin MIME type do client gửi.
     if (buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) {
       return { extension: 'jpg', mimeType: 'image/jpeg' };
     }

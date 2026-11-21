@@ -105,8 +105,8 @@ paths:
             example:
               fullName: Nguyễn An
               email: khach@example.com
-              phone: 0901234567
               password: MatKhauMinhHoa!2026
+              passwordConfirmation: MatKhauMinhHoa!2026
   /auth/email-verifications/confirm:
     post:
       tags:
@@ -9876,21 +9876,25 @@ components:
           type: string
           format: email
           example: khach@example.com
-        phone:
-          type: string
-          pattern: ^\+?[0-9]{9,15}$
-          example: 0901234567
         password:
           type: string
-          minLength: 1
+          minLength: 8
+          maxLength: 128
           writeOnly: true
           description: Đáp ứng chính sách mật khẩu cấu hình của M01; ví dụ không phải thông tin thật.
+          example: MatKhauMinhHoa!2026
+        passwordConfirmation:
+          type: string
+          minLength: 8
+          maxLength: 128
+          writeOnly: true
+          description: Nhập lại mật khẩu; phải khớp với password.
           example: MatKhauMinhHoa!2026
       required:
       - fullName
       - email
-      - phone
       - password
+      - passwordConfirmation
       additionalProperties: false
     EmailRequest:
       type: object

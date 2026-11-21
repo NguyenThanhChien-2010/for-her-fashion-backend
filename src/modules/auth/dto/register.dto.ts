@@ -1,9 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, Length, Matches, MaxLength } from 'class-validator';
+import { IsEmail, IsString, Length, MaxLength } from 'class-validator';
+import { MatchProperty } from '../../../common/validators/match-property.decorator';
 import { StrongPassword } from './password.decorator';
 
-// RegisterRequest của contract: fullName, email, phone, password đều bắt buộc.
-// Schema Leader lưu phone trực tiếp trên User.phone (@unique) nên đây cũng là khóa đăng nhập bằng SĐT.
 export class RegisterDto {
   @ApiProperty({ example: 'Nguyễn An', minLength: 1, maxLength: 100 })
   @IsString()
@@ -15,11 +14,12 @@ export class RegisterDto {
   @MaxLength(254)
   email!: string;
 
-  @ApiProperty({ example: '0901234567', pattern: String.raw`^\+?[0-9]{9,15}$` })
-  @IsString()
-  @Matches(/^\+?\d{9,15}$(?![\s\S])/, { message: 'Số điện thoại không đúng định dạng.' })
-  phone!: string;
-
   @StrongPassword()
   password!: string;
+
+  @ApiProperty({ example: 'StrongPass@123', minLength: 8, maxLength: 128, writeOnly: true })
+  @IsString()
+  @Length(8, 128)
+  @MatchProperty('password', { message: 'Mật khẩu xác nhận không khớp.' })
+  passwordConfirmation!: string;
 }

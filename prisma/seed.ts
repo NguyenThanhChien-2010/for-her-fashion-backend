@@ -1,9 +1,7 @@
 import { PrismaClient, UserRole, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 
-// Seed tài khoản quản trị đầu tiên cho môi trường local.
-// Idempotent: chạy lại nhiều lần không tạo trùng và không ghi đè mật khẩu đã đổi.
-// Không dùng cho production — mật khẩu lấy từ SEED_ADMIN_PASSWORD, không hardcode.
+// Seed Admin local; mật khẩu chỉ lấy từ biến môi trường.
 const prisma = new PrismaClient();
 
 const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@forher.local';
@@ -41,7 +39,7 @@ async function main(): Promise<void> {
       fullName: ADMIN_FULL_NAME,
       role: UserRole.ADMIN,
       status: UserStatus.ACTIVE,
-      // Tài khoản seed là tài khoản nội bộ, không đi qua luồng xác thực email.
+      // Admin nội bộ dùng được ngay, không cần xác thực email.
       emailVerifiedAt: new Date(),
     },
     select: { id: true, email: true, role: true },

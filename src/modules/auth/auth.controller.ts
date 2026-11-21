@@ -21,8 +21,6 @@ import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { TokenDto } from './dto/token.dto';
 
-// HTTP boundary M01 cho khách hàng: register, login, refresh, logout, xác thực email, đặt lại mật khẩu.
-// Mọi đường dẫn khớp chính xác API Contract v1.0.2; controller chỉ điều phối, logic nằm trong AuthService.
 @ApiTags('M01')
 @Controller()
 export class AuthController {
@@ -30,6 +28,7 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  // API: POST /auth/register
   @Post('auth/register')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
@@ -45,6 +44,7 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  // API: POST /auth/email-verifications/confirm
   @Post('auth/email-verifications/confirm')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -60,6 +60,7 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  // API: POST /auth/email-verifications/resend
   @Post('auth/email-verifications/resend')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
@@ -75,6 +76,7 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  // API: POST /auth/login
   @Post('auth/login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -93,6 +95,7 @@ export class AuthController {
   }
 
   @Public()
+  // API: POST /auth/refresh
   @Post('auth/refresh')
   @HttpCode(HttpStatus.OK)
   @UseGuards(AuthGuard('jwt-refresh'))
@@ -114,6 +117,7 @@ export class AuthController {
     );
   }
 
+  // API: POST /auth/logout
   @Post('auth/logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiBearerAuth('BearerAuth')
@@ -124,12 +128,12 @@ export class AuthController {
   @ApiNoContentResponse()
   @ApiErrorResponses(401, 403, 429, 500)
   async logout(@CurrentUser() user: AuthenticatedUser): Promise<void> {
-    // user.id là Int theo schema Leader; service nhận chuỗi để đồng nhất với contract.
     await this.authService.logout(String(user.id), user.sessionId);
   }
 
   @Public()
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  // API: POST /auth/password/forgot
   @Post('auth/password/forgot')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
@@ -145,6 +149,7 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  // API: POST /auth/password/reset
   @Post('auth/password/reset')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

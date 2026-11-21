@@ -26,7 +26,6 @@ import {
   InternalAccountCreateDto,
 } from './dto/account.dto';
 
-// M01 — quản trị tài khoản theo schema Leader (User.id Int, version Int, emailVerifiedAt DateTime?).
 @Injectable()
 export class AdminAccountsService {
   constructor(
@@ -36,7 +35,6 @@ export class AdminAccountsService {
     private readonly logger: PinoLogger,
   ) {}
 
-  // GET /admin/accounts — Admin xem mọi role; Staff chỉ xem CUSTOMER theo đúng phạm vi contract.
   async list(
     query: AccountQueryDto,
     requester: { id: string; role: UserRole },
@@ -47,7 +45,6 @@ export class AdminAccountsService {
       requester.role === UserRole.ADMIN ? {} : { role: UserRole.CUSTOMER };
 
     if (query.role) {
-      // Staff yêu cầu role nội bộ phải bị chặn 403 thay vì âm thầm trả tập rỗng.
       if (requester.role !== UserRole.ADMIN && query.role !== 'CUSTOMER') {
         throw new ForbiddenException(
           apiErrorPayload(
@@ -62,7 +59,6 @@ export class AdminAccountsService {
     if (query.q) {
       const keyword = query.q.trim();
       if (keyword) {
-        // Tìm theo họ tên, email hoặc số điện thoại; dùng contains để hỗ trợ tìm một phần.
         scope.OR = [
           { email: { contains: keyword } },
           { fullName: { contains: keyword } },
@@ -74,7 +70,6 @@ export class AdminAccountsService {
     const [users, total] = await Promise.all([
       this.prisma.user.findMany({
         where: scope,
-        // Sắp xếp ổn định theo createdAt rồi id để phân trang không lặp/thiếu bản ghi.
         orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
         skip: (page - 1) * limit,
         take: limit,
@@ -88,7 +83,6 @@ export class AdminAccountsService {
     };
   }
 
-  // GET /admin/accounts/:accountId — Staff chỉ xem CUSTOMER; ngoài phạm vi trả 404 để không lộ sự tồn tại.
   async findOne(
     accountId: string,
     requester: { id: string; role: UserRole },
@@ -113,8 +107,6 @@ export class AdminAccountsService {
     return this.authService.toAccount(user);
   }
 
-  // POST /admin/accounts — tạo tài khoản nội bộ STAFF/ADMIN, đã xác thực để dùng được ngay.
-  // Contract bắt buộc header Idempotency-Key: cùng key + payload trả lại kết quả cũ.
   async create(
     dto: InternalAccountCreateDto,
     idempotencyKey: string,
@@ -126,7 +118,6 @@ export class AdminAccountsService {
       'admin.accounts.create',
       async (tx) => ({
         statusCode: 201,
-        // Bản ghi idempotency lưu JSON thuần, không phải class instance.
         data: (await this.createAccount(tx, dto, requester.id)) as unknown as Prisma.JsonObject,
       }),
     )) as unknown as AccountResponse;
@@ -170,7 +161,6 @@ export class AdminAccountsService {
         ...(phone ? { phone } : {}),
         role: dto.role === 'ADMIN' ? UserRole.ADMIN : UserRole.STAFF,
         status: UserStatus.ACTIVE,
-        // Tài khoản nội bộ do Admin cấp coi như đã xác thực email.
         emailVerifiedAt: new Date(),
         ...(creatorId !== null ? { createdBy: creatorId } : {}),
       },
@@ -189,7 +179,6 @@ export class AdminAccountsService {
     return this.authService.toAccount(user);
   }
 
-  // PATCH /admin/accounts/:accountId/role — chỉ đổi role giữa STAFF/ADMIN, kèm optimistic locking.
   async updateRole(
     accountId: string,
     dto: AccountRoleUpdateDto,
@@ -199,7 +188,6 @@ export class AdminAccountsService {
     this.assertNotSelf(numericId, requester.id, 'role');
     const current = await this.getTargetOrThrow(numericId);
 
-    // Contract: không nâng CUSTOMER thành nội bộ qua endpoint này.
     if (current.role === UserRole.CUSTOMER) {
       throw new BadRequestException(
         apiErrorPayload(
@@ -222,7 +210,6 @@ export class AdminAccountsService {
     return this.reload(numericId);
   }
 
-  // PATCH /admin/accounts/:accountId/status — LOCKED thu hồi toàn bộ AuthSession đang hiệu lực.
   async updateStatus(
     accountId: string,
     dto: AccountStatusUpdateDto,
@@ -250,7 +237,6 @@ export class AdminAccountsService {
     return this.reload(numericId);
   }
 
-  // Cập nhật có điều kiện version trong một transaction: chống ghi đè khi hai Admin cùng sửa.
   private async applyUserUpdate(
     accountId: number,
     version: number,
@@ -264,7 +250,6 @@ export class AdminAccountsService {
         where: { id: accountId, version },
         data,
       });
-      // count = 0 nghĩa là version đã bị request khác thay đổi giữa lúc đọc và ghi.
       if (!result.count) {
         throw new ConflictException(
           apiErrorPayload(ErrorCode.CONFLICT, ErrorMessage.CONFLICT_STATE),
@@ -276,7 +261,6 @@ export class AdminAccountsService {
           data: { revokedAt: new Date() },
         });
       }
-      // AuditLog của Leader là nơi lưu lý do/actor để truy vết về sau.
       await this.createUserAuditLog(tx, {
         actorId,
         action: audit.action,
@@ -348,12 +332,12 @@ export class AdminAccountsService {
     }
   }
 
-  // Admin không tự hạ quyền/khóa chính mình để tránh mất quyền quản trị đang dùng.
   private assertNotSelf(
     accountId: number,
     requesterId: string,
     field: 'role' | 'status',
   ): void {
+    // Tránh admin tự khóa hoặc hạ quyền tài khoản đang dùng.
     if (String(accountId) === requesterId) {
       throw new ForbiddenException(
         apiErrorPayload(
