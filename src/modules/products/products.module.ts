@@ -16,12 +16,16 @@ import {
   AdminSizesController,
 } from './admin-product-options.controller';
 
+import { ProductVariantsService } from './product-variants.service';
+import { AdminProductVariantsController } from './admin-product-variants.controller';
+
 @Module({
   controllers: [
     AdminProductsController,
     PublicProductsController,
     AdminColorsController,
     AdminSizesController,
+    AdminProductVariantsController,
   ],
 
   providers: [
@@ -29,6 +33,7 @@ import {
     PublicProductsService,
     PublicProductsFiltersService,
     ProductOptionsService,
+    ProductVariantsService,
   ],
 
   exports: [
@@ -36,6 +41,7 @@ import {
     PublicProductsService,
     PublicProductsFiltersService,
     ProductOptionsService,
+    ProductVariantsService,
   ],
 })
 export class ProductsModule {}
