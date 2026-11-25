@@ -29,6 +29,7 @@ enum ProductStatus {
   DRAFT
   ACTIVE
   HIDDEN
+  DISCONTINUED
 }
 
 enum InventoryReason {
