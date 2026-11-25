@@ -20,6 +20,7 @@ import { TransformResponseInterceptor } from './common/interceptors/transform-re
 
 import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { ProductsModule } from './modules/products/products.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 
@@ -84,6 +85,9 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 
     // BE-02: Categories
     CategoriesModule,
+
+    // BE-02: Products
+    ProductsModule,
 
     // Shared: Uploads
     UploadsModule,
