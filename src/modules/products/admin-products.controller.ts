@@ -2,7 +2,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -15,6 +17,7 @@ import {
   ApiBody,
   ApiCreatedResponse,
   ApiHeader,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -41,8 +44,14 @@ export class AdminProductsController {
     private readonly productsService: ProductsService,
   ) {}
 
+  // ==========================================
+  // GET /api/v1/admin/products
+  // ==========================================
+
   @Get()
-  @ApiOperation({ summary: 'Danh sách sản phẩm quản trị' })
+  @ApiOperation({
+    summary: 'Danh sách sản phẩm quản trị',
+  })
   @ApiOkResponse({
     description: 'Danh sách sản phẩm có phân trang.',
   })
@@ -56,15 +65,23 @@ export class AdminProductsController {
     );
   }
 
+  // ==========================================
+  // POST /api/v1/admin/products
+  // ==========================================
+
   @Post()
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Tạo sản phẩm' })
+  @ApiOperation({
+    summary: 'Tạo sản phẩm',
+  })
   @ApiHeader({
     name: 'Idempotency-Key',
     required: true,
   })
-  @ApiBody({ type: ProductCreateDto })
+  @ApiBody({
+    type: ProductCreateDto,
+  })
   @ApiCreatedResponse({
     description: 'Tạo sản phẩm thành công.',
   })
@@ -80,9 +97,17 @@ export class AdminProductsController {
     );
   }
 
+  // ==========================================
+  // PATCH /api/v1/admin/products/:productId
+  // ==========================================
+
   @Patch(':productId')
-  @ApiOperation({ summary: 'Cập nhật sản phẩm theo quyền' })
-  @ApiBody({ type: ProductPatchDto })
+  @ApiOperation({
+    summary: 'Cập nhật sản phẩm theo quyền',
+  })
+  @ApiBody({
+    type: ProductPatchDto,
+  })
   @ApiOkResponse({
     description: 'Cập nhật sản phẩm thành công.',
   })
@@ -94,6 +119,38 @@ export class AdminProductsController {
     return this.productsService.update(
       productId,
       dto,
+      requester,
+    );
+  }
+
+  // ==========================================
+  // DELETE /api/v1/admin/products/:productId
+  // ==========================================
+
+  @Delete(':productId')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Xóa sản phẩm chưa có tham chiếu',
+  })
+  @ApiHeader({
+    name: 'If-Match',
+    required: true,
+    description:
+      'Version sản phẩm dạng chuỗi có dấu ngoặc kép, ví dụ: "1"',
+    example: '"1"',
+  })
+  @ApiNoContentResponse({
+    description: 'Xóa thành công, không có response body.',
+  })
+  async remove(
+    @Param('productId') productId: string,
+    @Headers('if-match') ifMatch: string | undefined,
+    @CurrentUser() requester: ProductRequester,
+  ): Promise<void> {
+    await this.productsService.remove(
+      productId,
+      ifMatch,
       requester,
     );
   }

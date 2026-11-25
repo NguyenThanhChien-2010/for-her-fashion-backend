@@ -1,3 +1,4 @@
+
 import {
   BadRequestException,
   ConflictException,
@@ -99,6 +100,22 @@ export class ProductsService {
     return id;
   }
 
+  private parseIfMatch(ifMatch: string | undefined): number {
+    if (typeof ifMatch !== 'string') {
+      throw this.badRequest('Thiếu header If-Match.');
+    }
+
+    const match = /^"([1-9][0-9]*)"$/.exec(ifMatch.trim());
+
+    if (!match) {
+      throw this.badRequest(
+        'If-Match phải ở dạng "1", "2", ...',
+      );
+    }
+
+    return this.parseId(match[1]);
+  }
+
   private toResponse(product: ProductWithImages): ProductResponse {
     return {
       id: String(product.id),
@@ -120,7 +137,9 @@ export class ProductsService {
 
   private assertAdmin(requester: ProductRequester): void {
     if (requester.role !== UserRole.ADMIN) {
-      throw this.forbidden('Chỉ ADMIN được thực hiện thao tác này.');
+      throw this.forbidden(
+        'Chỉ ADMIN được thực hiện thao tác này.',
+      );
     }
   }
 
@@ -131,7 +150,9 @@ export class ProductsService {
       requester.role !== UserRole.ADMIN &&
       requester.role !== UserRole.STAFF
     ) {
-      throw this.forbidden('Bạn không có quyền quản lý sản phẩm.');
+      throw this.forbidden(
+        'Bạn không có quyền quản lý sản phẩm.',
+      );
     }
   }
 
@@ -152,8 +173,7 @@ export class ProductsService {
       'imageFileIds',
     ]);
 
-    // class-transformer có thể tạo thuộc tính tùy chọn với giá trị undefined.
-    // Chỉ kiểm tra các trường thực sự có giá trị trong request.
+    // Chỉ kiểm tra trường có giá trị thực sự.
     for (const [key, value] of Object.entries(dto)) {
       if (value === undefined) {
         continue;
@@ -171,7 +191,9 @@ export class ProductsService {
     tx: Prisma.TransactionClient,
     fileIds: number[],
   ): Promise<void> {
-    if (fileIds.length === 0) return;
+    if (fileIds.length === 0) {
+      return;
+    }
 
     if (new Set(fileIds).size !== fileIds.length) {
       throw this.badRequest('Danh sách ảnh bị trùng.');
@@ -207,12 +229,21 @@ export class ProductsService {
           'Dữ liệu đang được tham chiếu bởi bảng khác.',
         );
       }
+
+      if (error.code === 'P2034') {
+        throw this.conflict(
+          'Giao dịch xung đột, vui lòng tải lại và thử lại.',
+        );
+      }
     }
 
     throw error;
   }
 
+  // ==========================================
   // GET /api/v1/admin/products
+  // ==========================================
+
   async listAdmin(
     page = 1,
     limit = 20,
@@ -231,7 +262,10 @@ export class ProductsService {
       this.prisma.product.findMany({
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        orderBy: [
+          { createdAt: 'desc' },
+          { id: 'desc' },
+        ],
         include: {
           images: {
             orderBy: { sortOrder: 'asc' },
@@ -243,11 +277,18 @@ export class ProductsService {
 
     return {
       items: items.map((item) => this.toResponse(item)),
-      pagination: { page, limit, total },
+      pagination: {
+        page,
+        limit,
+        total,
+      },
     };
   }
 
+  // ==========================================
   // POST /api/v1/admin/products
+  // ==========================================
+
   async create(
     dto: ProductCreateDto,
     idempotencyKey: string,
@@ -347,7 +388,10 @@ export class ProductsService {
     }
   }
 
+  // ==========================================
   // PATCH /api/v1/admin/products/:productId
+  // ==========================================
+
   async update(
     productId: string,
     dto: ProductPatchDto,
@@ -360,7 +404,8 @@ export class ProductsService {
     }
 
     const changes = Object.entries(dto).filter(
-      ([key, value]) => key !== 'version' && value !== undefined,
+      ([key, value]) =>
+        key !== 'version' && value !== undefined,
     );
 
     if (changes.length === 0) {
@@ -378,22 +423,31 @@ export class ProductsService {
 
     if (dto.name !== undefined) {
       if (!dto.name.trim()) {
-        throw this.badRequest('Tên sản phẩm không được để trống.');
+        throw this.badRequest(
+          'Tên sản phẩm không được để trống.',
+        );
       }
+
       data.name = dto.name.trim();
     }
 
     if (dto.slug !== undefined) {
       if (!dto.slug.trim()) {
-        throw this.badRequest('Slug không được để trống.');
+        throw this.badRequest(
+          'Slug không được để trống.',
+        );
       }
+
       data.slug = dto.slug.trim();
     }
 
     if (dto.baseCode !== undefined) {
       if (!dto.baseCode.trim()) {
-        throw this.badRequest('Mã sản phẩm không được để trống.');
+        throw this.badRequest(
+          'Mã sản phẩm không được để trống.',
+        );
       }
+
       data.baseCode = dto.baseCode.trim();
     }
 
@@ -439,6 +493,7 @@ export class ProductsService {
           );
         }
 
+        // Không đổi baseCode nếu đã tồn tại SKU.
         if (
           dto.baseCode !== undefined &&
           dto.baseCode.trim() !== current.baseCode
@@ -456,7 +511,9 @@ export class ProductsService {
 
         if (dto.categoryId !== undefined) {
           const category = await tx.category.findUnique({
-            where: { id: this.parseId(dto.categoryId) },
+            where: {
+              id: this.parseId(dto.categoryId),
+            },
             select: { id: true },
           });
 
@@ -524,6 +581,113 @@ export class ProductsService {
 
         return after;
       });
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+  }
+
+  // ==========================================
+  // DELETE /api/v1/admin/products/:productId
+  // ==========================================
+
+  async remove(
+    productId: string,
+    ifMatch: string | undefined,
+    requester: ProductRequester,
+  ): Promise<void> {
+    // Chỉ ADMIN được xóa.
+    this.assertAdmin(requester);
+
+    const id = this.parseId(productId);
+    const expectedVersion = this.parseIfMatch(ifMatch);
+    const actorId = this.parseId(String(requester.id));
+
+    try {
+      await this.prisma.$transaction(
+        async (tx) => {
+          const product = await tx.product.findUnique({
+            where: { id },
+            include: {
+              _count: {
+                select: {
+                  variants: true,
+                  images: true,
+                  wishlist: true,
+                  reviews: true,
+                },
+              },
+              ratingStats: true,
+            },
+          });
+
+          if (!product) {
+            throw this.notFound(
+              'Sản phẩm không tồn tại.',
+            );
+          }
+
+          // Kiểm tra version trước khi xóa.
+          if (product.version !== expectedVersion) {
+            throw this.conflict(
+              'Phiên bản sản phẩm không khớp.',
+            );
+          }
+
+          // Chặn xóa khi còn dữ liệu liên kết.
+          // Tránh cascade xóa biến thể hoặc hình ảnh.
+          if (
+            product._count.variants > 0 ||
+            product._count.images > 0 ||
+            product._count.wishlist > 0 ||
+            product._count.reviews > 0 ||
+            product.ratingStats !== null
+          ) {
+            throw this.conflict(
+              'Không thể xóa sản phẩm còn biến thể, ảnh hoặc tham chiếu khác. Hãy chuyển sang HIDDEN hoặc DISCONTINUED.',
+            );
+          }
+
+          // Xóa có điều kiện version.
+          const deleted = await tx.product.deleteMany({
+            where: {
+              id,
+              version: expectedVersion,
+            },
+          });
+
+          if (deleted.count !== 1) {
+            throw this.conflict(
+              'Sản phẩm đã bị thay đổi hoặc xóa.',
+            );
+          }
+
+          // Ghi nhật ký xóa trong cùng transaction.
+          await tx.auditLog.create({
+            data: {
+              actorId,
+              action: 'PRODUCT_DELETE',
+              entityType: 'Product',
+              entityId: String(id),
+              before: {
+                name: product.name,
+                slug: product.slug,
+                baseCode: product.baseCode,
+                categoryId: String(product.categoryId),
+                price: product.price.toString(),
+                status: product.status,
+                version: product.version,
+              },
+              after: {
+                deleted: true,
+              },
+            },
+          });
+        },
+        {
+          isolationLevel:
+            Prisma.TransactionIsolationLevel.Serializable,
+        },
+      );
     } catch (error) {
       this.handlePrismaError(error);
     }
