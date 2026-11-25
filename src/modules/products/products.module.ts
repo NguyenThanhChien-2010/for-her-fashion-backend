@@ -9,20 +9,33 @@ import { PublicProductsController } from './public-products.controller';
 
 import { PublicProductsFiltersService } from './public-products-filters.service';
 
+import { ProductOptionsService } from './product-options.service';
+
+import {
+  AdminColorsController,
+  AdminSizesController,
+} from './admin-product-options.controller';
+
 @Module({
   controllers: [
     AdminProductsController,
     PublicProductsController,
+    AdminColorsController,
+    AdminSizesController,
   ],
+
   providers: [
     ProductsService,
     PublicProductsService,
     PublicProductsFiltersService,
+    ProductOptionsService,
   ],
+
   exports: [
     ProductsService,
     PublicProductsService,
     PublicProductsFiltersService,
+    ProductOptionsService,
   ],
 })
 export class ProductsModule {}
