@@ -120,9 +120,10 @@ export class PublicProductsController {
       'NEWEST',
       'PRICE_ASC',
       'PRICE_DESC',
+      'RELEVANCE',
     ],
     description:
-      'RELEVANCE chưa triển khai vì thiếu đặc tả FR-03.4.',
+      'RELEVANCE theo FR-03.4: do khop tu khoa, con hang, ngay tao va ID.',
   })
   @ApiOkResponse({
     description: 'Danh sách sản phẩm công khai.',

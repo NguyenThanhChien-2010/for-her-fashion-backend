@@ -202,6 +202,7 @@ export class ProductsService {
     const count = await tx.file.count({
       where: {
         id: { in: fileIds },
+        purpose: 'PRODUCT',
       },
     });
 
@@ -474,6 +475,16 @@ export class ProductsService {
 
     try {
       return await this.prisma.$transaction(async (tx) => {
+        // Serialize baseCode changes with variant creation.
+        if (dto.baseCode !== undefined) {
+          await tx.$queryRaw`
+            SELECT id
+            FROM products
+            WHERE id = ${id}
+            FOR UPDATE
+          `;
+        }
+
         const current = await tx.product.findUnique({
           where: { id },
           include: {

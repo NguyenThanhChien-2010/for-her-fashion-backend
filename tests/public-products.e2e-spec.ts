@@ -85,6 +85,7 @@ const rows = new Map<number, TestProduct>();
 // ==========================================
 
 const prismaMock = {
+  $queryRaw: jest.fn(),
   color: {
     findMany: jest.fn(),
   },
@@ -254,6 +255,11 @@ describe('BE-02 Public Products HTTP E2E', () => {
     rows.set(3, makeProduct());
 
     jest.clearAllMocks();
+
+    prismaMock.$queryRaw.mockReset();
+    prismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([{ id: 3 }]);
 
     prismaMock.product.count.mockResolvedValue(1);
 
@@ -613,6 +619,180 @@ describe('BE-02 Public Products HTTP E2E', () => {
       }),
     );
   });
+
+  // ==========================================
+  // RELEVANCE - FR-03.4
+  // ==========================================
+
+  it('RELEVANCE: public request without keyword - 200', async () => {
+    const response = await request(app.getHttpServer())
+      .get(`${endpoint}?sort=RELEVANCE`)
+      .expect(HttpStatus.OK);
+
+    expect(response.body.data.items).toHaveLength(1);
+
+    expect(response.body.data.items[0]).toMatchObject({
+      id: '3',
+      status: ProductStatus.ACTIVE,
+      price: 250000,
+    });
+
+    expect(response.body.data.pagination).toEqual({
+      page: 1,
+      limit: 20,
+      total: 1,
+    });
+
+    expect(response.body.traceId).toEqual(expect.any(String));
+
+    expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(prismaMock.product.count).not.toHaveBeenCalled();
+
+    const sql = prismaMock.$queryRaw.mock.calls[1][0] as Prisma.Sql;
+
+    expect(sql.sql).toContain(
+      'CASE WHEN p.id IS NOT NULL THEN 0 ELSE 1 END',
+    );
+
+    expect(sql.sql).toContain('si.quantity > 0');
+    expect(sql.sql).toContain('p.createdAt DESC');
+    expect(sql.sql).toContain('p.id ASC');
+  });
+
+  it('RELEVANCE: keyword uses parameterized SQL - 200', async () => {
+    const keyword = 'ao so';
+
+    const response = await request(app.getHttpServer())
+      .get(endpoint)
+      .query({
+        sort: 'RELEVANCE',
+        q: keyword,
+      })
+      .expect(HttpStatus.OK);
+
+    expect(response.body.data.items).toHaveLength(1);
+
+    const countSql = prismaMock.$queryRaw.mock.calls[0][0] as Prisma.Sql;
+    const idsSql = prismaMock.$queryRaw.mock.calls[1][0] as Prisma.Sql;
+
+    expect(countSql.sql).toContain('LOCATE');
+    expect(idsSql.sql).toContain('CASE');
+    expect(idsSql.sql).toContain('ELSE 2');
+
+    expect(idsSql.values).toContain(keyword);
+    expect(idsSql.values).toContain('ao');
+    expect(idsSql.values).toContain('so');
+
+    expect(idsSql.sql).not.toContain(keyword);
+  });
+
+  it('RELEVANCE: color size and stock filters use same SKU - 200', async () => {
+    await request(app.getHttpServer())
+      .get(endpoint)
+      .query({
+        sort: 'RELEVANCE',
+        colorIds: '1',
+        sizeCodes: 'M',
+        inStock: 'true',
+      })
+      .expect(HttpStatus.OK);
+
+    const countSql = prismaMock.$queryRaw.mock.calls[0][0] as Prisma.Sql;
+    const idsSql = prismaMock.$queryRaw.mock.calls[1][0] as Prisma.Sql;
+
+    expect(countSql.sql).toContain('product_variants v');
+    expect(countSql.sql).toContain('v.isActive = 1');
+    expect(countSql.sql).toContain('v.colorId IN');
+    expect(countSql.sql).toContain('v.sizeCode IN');
+    expect(countSql.sql).toContain('i.quantity > 0');
+
+    expect(countSql.values).toContain(1);
+    expect(countSql.values).toContain('M');
+
+    expect(idsSql.sql).toContain('sv.colorId IN');
+    expect(idsSql.sql).toContain('sv.sizeCode IN');
+    expect(idsSql.sql).toContain('si.quantity > 0');
+  });
+
+  it('RELEVANCE: pagination preserves ranked ID order - 200', async () => {
+    prismaMock.$queryRaw.mockReset();
+
+    prismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 4n }])
+      .mockResolvedValueOnce([{ id: 4 }, { id: 3 }]);
+
+    prismaMock.product.findMany.mockResolvedValueOnce([
+      makeProduct({ id: 3 }),
+      makeProduct({ id: 4, name: 'Product 4' }),
+    ]);
+
+    const response = await request(app.getHttpServer())
+      .get(endpoint)
+      .query({
+        sort: 'RELEVANCE',
+        page: '2',
+        limit: '2',
+      })
+      .expect(HttpStatus.OK);
+
+    expect(response.body.data.pagination).toEqual({
+      page: 2,
+      limit: 2,
+      total: 4,
+    });
+
+    expect(response.body.data.items).toEqual([
+      expect.objectContaining({ id: '4' }),
+      expect.objectContaining({ id: '3' }),
+    ]);
+
+    const idsSql = prismaMock.$queryRaw.mock.calls[1][0] as Prisma.Sql;
+
+    expect(idsSql.sql).toContain('LIMIT');
+    expect(idsSql.sql).toContain('OFFSET');
+    expect(idsSql.values.slice(-2)).toEqual([2, 2]);
+  });
+
+  it('RELEVANCE: empty result returns empty items - 200', async () => {
+    prismaMock.$queryRaw.mockReset();
+
+    prismaMock.$queryRaw
+      .mockResolvedValueOnce([{ total: 0n }])
+      .mockResolvedValueOnce([]);
+
+    const response = await request(app.getHttpServer())
+      .get(endpoint)
+      .query({
+        sort: 'RELEVANCE',
+        q: 'NO-MATCH-BE02',
+      })
+      .expect(HttpStatus.OK);
+
+    expect(response.body.data.items).toEqual([]);
+
+    expect(response.body.data.pagination).toEqual({
+      page: 1,
+      limit: 20,
+      total: 0,
+    });
+
+    expect(prismaMock.product.findMany).not.toHaveBeenCalled();
+  });
+
+  it('RELEVANCE: invalid price range returns 400', async () => {
+    await request(app.getHttpServer())
+      .get(endpoint)
+      .query({
+        sort: 'RELEVANCE',
+        minPrice: '500000',
+        maxPrice: '100000',
+      })
+      .expect(HttpStatus.BAD_REQUEST);
+
+    expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
+    expect(prismaMock.product.findMany).not.toHaveBeenCalled();
+  });
+
 
   // ==========================================
   // PART 3 - SKU FILTERS

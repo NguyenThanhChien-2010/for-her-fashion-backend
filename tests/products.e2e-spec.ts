@@ -147,6 +147,7 @@ function productForQuery(row: TestProduct) {
 // ==========================================
 
 const db = {
+  $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
   product: {
     findMany: jest.fn(
       async ({

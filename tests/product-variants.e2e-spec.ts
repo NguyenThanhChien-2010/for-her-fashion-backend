@@ -32,6 +32,7 @@ import { TransformResponseInterceptor } from '../src/common/interceptors/transfo
 import { validationExceptionFactory } from '../src/common/errors/api-error';
 
 const tx = {
+  $queryRaw: jest.fn(),
   product: {
     findUnique: jest.fn(),
   },
@@ -162,6 +163,7 @@ describe('BE-02 ProductVariant HTTP E2E', () => {
   beforeEach(() => {
     jest.resetAllMocks();
 
+    tx.$queryRaw.mockResolvedValue([{ baseCode: 'AD10005' }]);
     tx.product.findUnique.mockResolvedValue({
       id: 3,
       baseCode: 'AD10005',

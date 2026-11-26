@@ -189,6 +189,19 @@ export class ProductVariantsService {
         'admin.products.variants.create',
 
         async (tx) => {
+          // Lock product and read the current baseCode.
+          const lockedProductRows =
+            await tx.$queryRaw<{ baseCode: string }[]>`
+              SELECT baseCode
+              FROM products
+              WHERE id = ${productId}
+              FOR UPDATE
+            `;
+
+          if (lockedProductRows.length === 0) {
+            throw this.notFound('Sản phẩm không tồn tại.');
+          }
+
           // ==================================
           // 4. KIỂM TRA PRODUCT, COLOR, SIZE
           // ==================================
@@ -250,7 +263,7 @@ export class ProductVariantsService {
           // ==================================
 
           const sku =
-            product.baseCode +
+            lockedProductRows[0].baseCode +
             color.skuSuffix +
             size.skuSuffix;
 

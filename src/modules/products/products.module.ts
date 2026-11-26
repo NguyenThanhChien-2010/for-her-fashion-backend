@@ -16,6 +16,8 @@ import { PublicProductsService } from './public-products.service';
 import { PublicProductsController } from './public-products.controller';
 
 import { PublicProductsFiltersService } from './public-products-filters.service';
+import { PublicProductVariantsController } from './public-product-variants.controller';
+import { PublicProductVariantsService } from './public-product-variants.service';
 
 // ==========================================
 // COLORS & SIZES
@@ -34,6 +36,8 @@ import {
 
 import { ProductVariantsService } from './product-variants.service';
 import { AdminProductVariantsController } from './admin-product-variants.controller';
+import { AdminVariantsController } from './admin-variants.controller';
+import { VariantPatchService } from './variant-patch.service';
 
 // ==========================================
 // ADMIN SIZE CHARTS
@@ -60,6 +64,7 @@ import { PublicSizeChartController } from './public-size-chart.controller';
 
     // Public Products
     PublicProductsController,
+    PublicProductVariantsController,
 
     // Colors & Sizes
     AdminColorsController,
@@ -67,6 +72,7 @@ import { PublicSizeChartController } from './public-size-chart.controller';
 
     // Product Variants
     AdminProductVariantsController,
+    AdminVariantsController,
 
     // Admin Size Charts
     AdminSizeChartsController,
@@ -82,12 +88,14 @@ import { PublicSizeChartController } from './public-size-chart.controller';
     // Public Products
     PublicProductsService,
     PublicProductsFiltersService,
+    PublicProductVariantsService,
 
     // Colors & Sizes
     ProductOptionsService,
 
     // Product Variants
     ProductVariantsService,
+    VariantPatchService,
 
     // Admin Size Charts
     SizeChartsService,

@@ -9,6 +9,7 @@ import { PublicProductsService } from './public-products.service';
 
 describe('BE-02 PublicProductsService', () => {
   const prisma = {
+    $queryRaw: jest.fn(),
     product: {
       findFirst: jest.fn(),
       findMany: jest.fn(),
@@ -42,6 +43,11 @@ describe('BE-02 PublicProductsService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+
+    prisma.$queryRaw.mockReset();
+    prisma.$queryRaw
+      .mockResolvedValueOnce([{ total: 1n }])
+      .mockResolvedValueOnce([{ id: 3 }]);
 
     prisma.product.findFirst.mockResolvedValue(
       makeProduct(),
@@ -297,16 +303,111 @@ describe('BE-02 PublicProductsService', () => {
     expect(prisma.product.count).not.toHaveBeenCalled();
   });
 
-  it('LIST: RELEVANCE chưa triển khai trả 400', async () => {
-    await expect(
-      service.findAll({
-        sort: 'RELEVANCE',
-      }),
-    ).rejects.toMatchObject({
-      status: 400,
+  it('RELEVANCE: khong co tu khoa, tra ket qua va pagination', async () => {
+    const result = await service.findAll({
+      sort: 'RELEVANCE',
     });
 
-    expect(prisma.product.findMany).not.toHaveBeenCalled();
+    expect(result.pagination).toEqual({
+      page: 1,
+      limit: 20,
+      total: 1,
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual(['3']);
+
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+
+    const idsSql = prisma.$queryRaw.mock.calls[1][0] as Prisma.Sql;
+
+    expect(idsSql.sql).toContain(
+      'CASE WHEN p.id IS NOT NULL THEN 0 ELSE 1 END',
+    );
+    expect(idsSql.sql).toContain('p.createdAt DESC');
+    expect(idsSql.sql).toContain('p.id ASC');
+    expect(idsSql.sql).toContain('LIMIT');
+    expect(idsSql.sql).toContain('OFFSET');
+
+    expect(prisma.product.count).not.toHaveBeenCalled();
+  });
+
+  it('RELEVANCE: tim kiem voi SQL tham so hoa', async () => {
+    await service.findAll({
+      sort: 'RELEVANCE',
+      q: 'áo sơ',
+    });
+
+    const countSql = prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql;
+    const idsSql = prisma.$queryRaw.mock.calls[1][0] as Prisma.Sql;
+
+    expect(countSql.sql).toContain('LOCATE');
+    expect(idsSql.sql).toContain('CASE');
+    expect(idsSql.sql).toContain('LOCATE');
+    expect(idsSql.sql).toContain('ELSE 2');
+
+    expect(idsSql.values).toContain('áo sơ');
+    expect(idsSql.values).toContain('áo');
+    expect(idsSql.values).toContain('sơ');
+
+    expect(idsSql.sql).not.toContain('áo sơ');
+  });
+
+  it('RELEVANCE: loc mau, size va ton kho tren cung SKU', async () => {
+    await service.findAll({
+      sort: 'RELEVANCE',
+      colorIds: '1',
+      sizeCodes: 'M',
+      inStock: 'true',
+    });
+
+    const countSql = prisma.$queryRaw.mock.calls[0][0] as Prisma.Sql;
+    const idsSql = prisma.$queryRaw.mock.calls[1][0] as Prisma.Sql;
+
+    expect(countSql.sql).toContain('EXISTS');
+    expect(countSql.sql).toContain('product_variants v');
+    expect(countSql.sql).toContain('v.colorId IN');
+    expect(countSql.sql).toContain('v.sizeCode IN');
+    expect(countSql.sql).toContain('i.quantity > 0');
+
+    expect(countSql.values).toContain(1);
+    expect(countSql.values).toContain('M');
+
+    expect(idsSql.sql).toContain('sv.colorId IN');
+    expect(idsSql.sql).toContain('sv.sizeCode IN');
+    expect(idsSql.sql).toContain('si.quantity > 0');
+  });
+
+  it('RELEVANCE: phan trang va giu thu tu tu SQL', async () => {
+    prisma.$queryRaw.mockReset();
+    prisma.$queryRaw
+      .mockResolvedValueOnce([{ total: 4n }])
+      .mockResolvedValueOnce([{ id: 4 }, { id: 3 }]);
+
+    prisma.product.findMany.mockResolvedValueOnce([
+      makeProduct({ id: 3 }),
+      makeProduct({ id: 4, name: 'San pham thu hai' }),
+    ]);
+
+    const result = await service.findAll({
+      sort: 'RELEVANCE',
+      page: '2',
+      limit: '2',
+    });
+
+    expect(result.pagination).toEqual({
+      page: 2,
+      limit: 2,
+      total: 4,
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual([
+      '4',
+      '3',
+    ]);
+
+    const idsSql = prisma.$queryRaw.mock.calls[1][0] as Prisma.Sql;
+
+    expect(idsSql.values.slice(-2)).toEqual([2, 2]);
   });
 
   // ==========================================

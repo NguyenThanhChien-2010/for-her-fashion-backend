@@ -52,6 +52,7 @@ describe('BE-02 ProductsService', () => {
   // ==========================================
 
   const tx = {
+    $queryRaw: jest.fn(),
     product: {
       findMany: jest.fn(),
       count: jest.fn(),
@@ -130,6 +131,7 @@ describe('BE-02 ProductsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
+    tx.$queryRaw.mockResolvedValue([{ id: 1 }]);
     tx.product.findMany.mockResolvedValue([]);
     tx.product.count.mockResolvedValue(0);
 
@@ -692,4 +694,181 @@ describe('BE-02 ProductsService', () => {
       tx.auditLog.create,
     ).not.toHaveBeenCalled();
   });
+
+  describe('BE-02 Product Images', () => {
+    it('ADMIN can create product with ordered PRODUCT images', async () => {
+      tx.file.count.mockResolvedValueOnce(2);
+
+      tx.product.create.mockResolvedValueOnce(
+        makeProduct({
+          version: 1,
+          images: [
+            { fileId: 10, sortOrder: 0 },
+            { fileId: 20, sortOrder: 1 },
+          ],
+        }),
+      );
+
+      const result = await service.create(
+        {
+          ...createDto,
+          imageFileIds: ['10', '20'],
+        },
+        'be02-product-images-create',
+        admin,
+      );
+
+      expect(tx.file.count).toHaveBeenCalledWith({
+        where: {
+          id: { in: [10, 20] },
+          purpose: 'PRODUCT',
+        },
+      });
+
+      expect(tx.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            images: {
+              create: [
+                { fileId: 10, sortOrder: 0 },
+                { fileId: 20, sortOrder: 1 },
+              ],
+            },
+          }),
+        }),
+      );
+
+      expect(result.imageFileIds).toEqual(['10', '20']);
+    });
+
+    it('rejects missing or wrong-purpose images on create', async () => {
+      tx.file.count.mockResolvedValueOnce(0);
+
+      await expect(
+        service.create(
+          {
+            ...createDto,
+            imageFileIds: ['99'],
+          },
+          'be02-invalid-product-image',
+          admin,
+        ),
+      ).rejects.toMatchObject({
+        status: 400,
+      });
+
+      expect(tx.file.count).toHaveBeenCalledWith({
+        where: {
+          id: { in: [99] },
+          purpose: 'PRODUCT',
+        },
+      });
+
+      expect(tx.product.create).not.toHaveBeenCalled();
+      expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects duplicate image IDs', async () => {
+      await expect(
+        service.create(
+          {
+            ...createDto,
+            imageFileIds: ['10', '10'],
+          },
+          'be02-duplicate-product-images',
+          admin,
+        ),
+      ).rejects.toMatchObject({
+        status: 400,
+      });
+
+      expect(tx.product.create).not.toHaveBeenCalled();
+    });
+
+    it('STAFF can replace product images in order', async () => {
+      tx.file.count.mockResolvedValueOnce(2);
+
+      tx.product.findUniqueOrThrow.mockResolvedValueOnce(
+        makeProduct({
+          version: 3,
+          images: [
+            { fileId: 20, sortOrder: 0 },
+            { fileId: 10, sortOrder: 1 },
+          ],
+        }),
+      );
+
+      const result = await service.update(
+        '1',
+        {
+          version: 2,
+          imageFileIds: ['20', '10'],
+        },
+        staff,
+      );
+
+      expect(tx.file.count).toHaveBeenCalledWith({
+        where: {
+          id: { in: [20, 10] },
+          purpose: 'PRODUCT',
+        },
+      });
+
+      expect(tx.productImage.deleteMany).toHaveBeenCalledWith({
+        where: { productId: 1 },
+      });
+
+      expect(tx.productImage.createMany).toHaveBeenCalledWith({
+        data: [
+          { productId: 1, fileId: 20, sortOrder: 0 },
+          { productId: 1, fileId: 10, sortOrder: 1 },
+        ],
+      });
+
+      expect(result.imageFileIds).toEqual(['20', '10']);
+      expect(result.version).toBe(3);
+      expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects wrong-purpose images before updating product', async () => {
+      tx.file.count.mockResolvedValueOnce(0);
+
+      await expect(
+        service.update(
+          '1',
+          {
+            version: 2,
+            imageFileIds: ['99'],
+          },
+          staff,
+        ),
+      ).rejects.toMatchObject({
+        status: 400,
+      });
+
+      expect(tx.product.updateMany).not.toHaveBeenCalled();
+      expect(tx.productImage.deleteMany).not.toHaveBeenCalled();
+      expect(tx.productImage.createMany).not.toHaveBeenCalled();
+      expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('allows clearing all product images', async () => {
+      await service.update(
+        '1',
+        {
+          version: 2,
+          imageFileIds: [],
+        },
+        admin,
+      );
+
+      expect(tx.productImage.deleteMany).toHaveBeenCalledWith({
+        where: { productId: 1 },
+      });
+
+      expect(tx.productImage.createMany).not.toHaveBeenCalled();
+      expect(tx.file.count).not.toHaveBeenCalled();
+    });
+  });
+
 });

@@ -7,6 +7,7 @@ import { IdempotencyService } from '../../common/services/idempotency.service';
 
 describe('BE-02 ProductVariantsService', () => {
   const tx = {
+    $queryRaw: jest.fn(),
     product: {
       findUnique: jest.fn(),
     },
@@ -53,6 +54,7 @@ describe('BE-02 ProductVariantsService', () => {
   beforeEach(() => {
     jest.resetAllMocks();
 
+    tx.$queryRaw.mockResolvedValue([{ baseCode: 'AD10005' }]);
     tx.product.findUnique.mockResolvedValue({
       id: 3,
       baseCode: 'AD10005',

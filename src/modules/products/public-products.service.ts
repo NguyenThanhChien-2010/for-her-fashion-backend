@@ -135,7 +135,7 @@ export class PublicProductsService {
 
   private parseSort(
     value: unknown,
-  ): 'NEWEST' | 'PRICE_ASC' | 'PRICE_DESC' {
+  ): 'NEWEST' | 'PRICE_ASC' | 'PRICE_DESC' | 'RELEVANCE' {
     if (value === undefined) {
       return 'NEWEST';
     }
@@ -143,7 +143,8 @@ export class PublicProductsService {
     if (
       value === 'NEWEST' ||
       value === 'PRICE_ASC' ||
-      value === 'PRICE_DESC'
+      value === 'PRICE_DESC' ||
+      value === 'RELEVANCE'
     ) {
       return value;
     }
@@ -290,6 +291,226 @@ export class PublicProductsService {
   // GET /api/v1/products
   // ==========================================
 
+  private async findRelevancePage(params: {
+    keyword?: string;
+    categoryId?: number;
+    minPrice?: number;
+    maxPrice?: number;
+    colorIds?: number[];
+    sizeCodes?: string[];
+    inStock?: boolean;
+    skip: number;
+    limit: number;
+  }) {
+    const {
+      keyword,
+      categoryId,
+      minPrice,
+      maxPrice,
+      colorIds,
+      sizeCodes,
+      inStock,
+      skip,
+      limit,
+    } = params;
+
+    const conditions: Prisma.Sql[] = [
+      Prisma.sql`p.status = 'ACTIVE'`,
+    ];
+
+    let allWords: Prisma.Sql | undefined;
+
+    if (keyword !== undefined) {
+      const words = [
+        ...new Set(
+          keyword.trim().split(/\s+/).filter(Boolean),
+        ),
+      ];
+
+      allWords = Prisma.sql`(
+        ${Prisma.join(
+          words.map(
+            (word) =>
+              Prisma.sql`LOCATE(${word}, p.name) > 0`,
+          ),
+          ' AND ',
+        )}
+      )`;
+
+      conditions.push(Prisma.sql`(
+        LOCATE(${keyword}, p.name) > 0
+        OR LOCATE(${keyword}, p.slug) > 0
+        OR LOCATE(${keyword}, p.baseCode) > 0
+        OR ${allWords}
+      )`);
+    }
+
+    if (categoryId !== undefined) {
+      conditions.push(
+        Prisma.sql`p.categoryId = ${categoryId}`,
+      );
+    }
+
+    if (minPrice !== undefined) {
+      conditions.push(
+        Prisma.sql`p.price >= ${minPrice}`,
+      );
+    }
+
+    if (maxPrice !== undefined) {
+      conditions.push(
+        Prisma.sql`p.price <= ${maxPrice}`,
+      );
+    }
+
+    // Loc mau, size va ton kho tren CUNG variant
+    if (
+      colorIds !== undefined ||
+      sizeCodes !== undefined ||
+      inStock === true
+    ) {
+      const variantConditions: Prisma.Sql[] = [
+        Prisma.sql`v.productId = p.id`,
+        Prisma.sql`v.isActive = 1`,
+      ];
+
+      if (colorIds !== undefined) {
+        variantConditions.push(
+          Prisma.sql`v.colorId IN (${Prisma.join(colorIds)})`,
+        );
+      }
+
+      if (sizeCodes !== undefined) {
+        variantConditions.push(
+          Prisma.sql`v.sizeCode IN (${Prisma.join(sizeCodes)})`,
+        );
+      }
+
+      if (inStock === true) {
+        variantConditions.push(
+          Prisma.sql`i.quantity > 0`,
+        );
+      }
+
+      conditions.push(Prisma.sql`
+        EXISTS (
+          SELECT 1
+          FROM product_variants v
+          LEFT JOIN inventories i
+            ON i.variantId = v.id
+          WHERE ${Prisma.join(variantConditions, ' AND ')}
+        )
+      `);
+    }
+
+    // Uu tien tinh trang con hang tren cac SKU
+    // phu hop bo loc mau va size hien tai.
+    const stockConditions: Prisma.Sql[] = [
+      Prisma.sql`sv.productId = p.id`,
+      Prisma.sql`sv.isActive = 1`,
+      Prisma.sql`si.quantity > 0`,
+    ];
+
+    if (colorIds !== undefined) {
+      stockConditions.push(
+        Prisma.sql`sv.colorId IN (${Prisma.join(colorIds)})`,
+      );
+    }
+
+    if (sizeCodes !== undefined) {
+      stockConditions.push(
+        Prisma.sql`sv.sizeCode IN (${Prisma.join(sizeCodes)})`,
+      );
+    }
+
+    const rank = keyword !== undefined && allWords
+      ? Prisma.sql`
+          CASE
+            WHEN LOCATE(${keyword}, p.name) > 0 THEN 0
+            WHEN ${allWords} THEN 1
+            ELSE 2
+          END
+        `
+      : Prisma.sql`CASE WHEN p.id IS NOT NULL THEN 0 ELSE 1 END`;
+
+    const whereSql = Prisma.join(conditions, ' AND ');
+
+    // Dem tren toan bo ket qua da loc
+    const countQuery = Prisma.sql`
+      SELECT COUNT(*) AS total
+      FROM products p
+      WHERE ${whereSql}
+    `;
+
+    // Sap xep truoc, sau do moi LIMIT/OFFSET
+    const idsQuery = Prisma.sql`
+      SELECT p.id
+      FROM products p
+      WHERE ${whereSql}
+      ORDER BY
+        ${rank} ASC,
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM product_variants sv
+            JOIN inventories si
+              ON si.variantId = sv.id
+            WHERE ${Prisma.join(stockConditions, ' AND ')}
+          ) THEN 0
+          ELSE 1
+        END ASC,
+        p.createdAt DESC,
+        p.id ASC
+      LIMIT ${limit}
+      OFFSET ${skip}
+    `;
+
+    const [countRows, idRows] = await Promise.all([
+      this.prisma.$queryRaw<
+        Array<{ total: bigint | number }>
+      >(countQuery),
+      this.prisma.$queryRaw<
+        Array<{ id: number }>
+      >(idsQuery),
+    ]);
+
+    const total = Number(countRows[0]?.total ?? 0);
+    const ids = idRows.map((row) => row.id);
+
+    const products = ids.length > 0
+      ? await this.prisma.product.findMany({
+          where: {
+            id: { in: ids },
+          },
+          include: {
+            images: {
+              orderBy: [
+                { sortOrder: Prisma.SortOrder.asc },
+                { id: Prisma.SortOrder.asc },
+              ],
+            },
+          },
+        })
+      : [];
+
+    const byId = new Map(
+      products.map((product) => [product.id, product]),
+    );
+
+    const items = ids.flatMap((id) => {
+      const product = byId.get(id);
+      return product ? [this.toResponse(product)] : [];
+    });
+
+    return {
+      items,
+      pagination: {
+        page: skip / limit + 1,
+        limit,
+        total,
+      },
+    };
+  }
   async findAll(
     query: PublicProductsQuery = {},
   ) {
@@ -507,6 +728,19 @@ export class PublicProductsService {
     // SORT
     // ========================================
 
+    if (sort === 'RELEVANCE') {
+      return this.findRelevancePage({
+        keyword,
+        categoryId,
+        minPrice,
+        maxPrice,
+        colorIds,
+        sizeCodes,
+        inStock,
+        skip,
+        limit,
+      });
+    }
     let orderBy:
       Prisma.ProductOrderByWithRelationInput[];
 
