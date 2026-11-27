@@ -21,6 +21,7 @@ import { TransformResponseInterceptor } from './common/interceptors/transform-re
 import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { ProductsModule } from './modules/products/products.module';
+import { InventoryModule } from './modules/inventory/inventory.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 
@@ -88,6 +89,9 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 
     // BE-02: Products
     ProductsModule,
+
+    // BE-02: Inventory (M03)
+    InventoryModule,
 
     // Shared: Uploads
     UploadsModule,

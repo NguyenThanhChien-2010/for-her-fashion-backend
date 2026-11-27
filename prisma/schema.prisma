@@ -1102,7 +1102,7 @@ model InventoryAdjustment {
   variantId         Int
   expectedVersion   Int
   requestedQuantity Int
-  reason            String         @db.VarChar(500)
+  reason            String         @db.VarChar(2000)
   actorId           Int
   status            SyncState      @default(PENDING)
   operationKey      String         @unique @db.VarChar(191)
