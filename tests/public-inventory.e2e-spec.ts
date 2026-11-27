@@ -1,31 +1,20 @@
 import { INestApplication } from '@nestjs/common';
 
-import {
-  APP_FILTER,
-  APP_GUARD,
-  APP_INTERCEPTOR,
-} from '@nestjs/core';
 
-import { Test } from '@nestjs/testing';
 
 import {
   ProductStatus,
   SyncState,
 } from '@prisma/client';
 
-import { PinoLogger } from 'nestjs-pino';
 
 import request from 'supertest';
 import type { App } from 'supertest/types';
+import { createInventoryTestApp, expectNoInventoryWrites } from './helpers/inventory-e2e.helper';
 
-import { InventoryModule } from '../src/modules/inventory/inventory.module';
-import { PrismaService } from '../src/modules/prisma/prisma.service';
 
 import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
-import { RolesGuard } from '../src/common/guards/roles.guard';
 
-import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
-import { TransformResponseInterceptor } from '../src/common/interceptors/transform-response.interceptor';
 
 interface TestInventory {
   quantity: number;
@@ -169,41 +158,7 @@ describe('BE-02 M03 Public Inventory HTTP E2E', () => {
     `/api/v1/variants/${variantId}/availability`;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [InventoryModule],
-
-      providers: [
-        {
-          provide: PinoLogger,
-          useValue: loggerMock,
-        },
-        {
-          provide: APP_GUARD,
-          useClass: JwtAuthGuard,
-        },
-        {
-          provide: APP_GUARD,
-          useClass: RolesGuard,
-        },
-        {
-          provide: APP_FILTER,
-          useClass: AllExceptionsFilter,
-        },
-        {
-          provide: APP_INTERCEPTOR,
-          useClass: TransformResponseInterceptor,
-        },
-      ],
-    })
-      .overrideProvider(PrismaService)
-      .useValue(prismaMock)
-      .compile();
-
-    app = moduleRef.createNestApplication();
-
-    app.setGlobalPrefix('api/v1');
-
-    await app.init();
+    app = await createInventoryTestApp(prismaMock, loggerMock, JwtAuthGuard);
   });
 
   afterAll(async () => {
@@ -389,9 +344,7 @@ describe('BE-02 M03 Public Inventory HTTP E2E', () => {
       prismaMock.$executeRaw,
     ];
 
-    for (const mock of writeMocks) {
-      expect(mock).not.toHaveBeenCalled();
-    }
+    expectNoInventoryWrites(writeMocks);
   });
 
   it('PUBLIC: database failure returns safe error - 500', async () => {

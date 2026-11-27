@@ -216,16 +216,15 @@ describe('BE-02 SizeChartsService - GET Detail', () => {
   // TEST 3 - INVALID ID
   // ========================================
 
-  it('3. chartId không hợp lệ trả HTTP 400', async () => {
-    await expect(
-      service.getById('abc'),
-    ).rejects.toMatchObject({
+  async function expectInvalidChartId(chartId: string): Promise<void> {
+    await expect(service.getById(chartId)).rejects.toMatchObject({
       status: 400,
     });
+    expect(prisma.sizeChart.findUnique).not.toHaveBeenCalled();
+  }
 
-    expect(
-      prisma.sizeChart.findUnique,
-    ).not.toHaveBeenCalled();
+  it('3. chartId không hợp lệ trả HTTP 400', async () => {
+    await expectInvalidChartId('abc');
   });
 
   // ========================================
@@ -233,15 +232,7 @@ describe('BE-02 SizeChartsService - GET Detail', () => {
   // ========================================
 
   it('4. chartId bằng 0 trả HTTP 400', async () => {
-    await expect(
-      service.getById('0'),
-    ).rejects.toMatchObject({
-      status: 400,
-    });
-
-    expect(
-      prisma.sizeChart.findUnique,
-    ).not.toHaveBeenCalled();
+    await expectInvalidChartId('0');
   });
 
   // ========================================
@@ -249,15 +240,7 @@ describe('BE-02 SizeChartsService - GET Detail', () => {
   // ========================================
 
   it('5. chartId vượt số nguyên an toàn trả HTTP 400', async () => {
-    await expect(
-      service.getById('999999999999999999999'),
-    ).rejects.toMatchObject({
-      status: 400,
-    });
-
-    expect(
-      prisma.sizeChart.findUnique,
-    ).not.toHaveBeenCalled();
+    await expectInvalidChartId('999999999999999999999');
   });
 
   // ========================================

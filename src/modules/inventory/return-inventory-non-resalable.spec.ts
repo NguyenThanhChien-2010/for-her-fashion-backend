@@ -1,5 +1,5 @@
-import { HttpException } from '@nestjs/common';
-import { DeliveryStatus, InventoryReason, ReturnStatus } from '@prisma/client';
+import { RECEIPT_ID, createCustomerFixtureData, createDeliveryFixtureData, expectError } from '../../../tests/helpers/return-inventory-unit.helper';
+import { InventoryReason } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 
 import { InventoryLedgerService } from './inventory-ledger.service';
@@ -7,46 +7,9 @@ import { PendingInventoryEffectService } from './pending-inventory-effect.servic
 import { ReturnInventoryService } from './return-inventory.service';
 import type { ReturnReceiptKind, VerifiedReturnEvidence } from './return-inventory.contract';
 
-const RECEIPT_ID = 15;
-const RECEIVED_AT = new Date('2020-01-01T00:00:00.000Z');
 
 function customerFixture() {
-  const order = {
-    id: 101,
-    userId: 7,
-    status: 'DELIVERED',
-    deliveryStatus: DeliveryStatus.DELIVERED as DeliveryStatus,
-  };
-  const orderItem = { id: 201, orderId: 101, variantId: 301, quantity: 5 };
-  const request = { orderId: 101, userId: 7, status: ReturnStatus.RECEIVED as ReturnStatus };
-  const requestItem = { id: 401, requestId: 501, orderItemId: 201, quantity: 5, approvedQuantity: 5, orderItem };
-  const item = { id: 601, receivedQuantity: 3, acceptedQuantity: 2, resalableQuantity: 0, requestItem };
-  const receipt = {
-    id: RECEIPT_ID,
-    requestId: 501,
-    operationKey: 'RETURN-RECEIPT-15',
-    actorId: 9,
-    kiotDocumentId: null as string | null,
-    receivedAt: new Date(RECEIVED_AT),
-    request,
-    items: [item],
-  };
-  const history = () => ({
-    id: item.id,
-    receiptId: receipt.id,
-    receivedQuantity: item.receivedQuantity,
-    acceptedQuantity: item.acceptedQuantity,
-    resalableQuantity: item.resalableQuantity,
-    receipt: { requestId: receipt.requestId },
-    requestItem: {
-      id: requestItem.id,
-      requestId: requestItem.requestId,
-      orderItemId: requestItem.orderItemId,
-      quantity: requestItem.quantity,
-      approvedQuantity: requestItem.approvedQuantity,
-      request: { orderId: request.orderId },
-    },
-  });
+  const { order, orderItem, request, requestItem, item, receipt, history } = createCustomerFixtureData(0, null);
   const mock = {
     $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
     order: { findUniqueOrThrow: jest.fn().mockResolvedValue(order) },
@@ -79,26 +42,7 @@ function customerFixture() {
 
 function deliveryFixture() {
   const f = customerFixture();
-  f.order.status = 'DELIVERY_UNSUCCESSFUL';
-  f.order.deliveryStatus = DeliveryStatus.RETURNED;
-  const item = { id: 701, orderItemId: f.orderItem.id, receivedQuantity: 3, resalableQuantity: 0, orderItem: f.orderItem };
-  const receipt = {
-    id: RECEIPT_ID,
-    orderId: f.order.id,
-    sourceKey: 'DELIVERY-RECEIPT-15',
-    actorId: null,
-    kiotDocumentId: 'KV-DELIVERY-15' as string | null,
-    receivedAt: new Date(RECEIVED_AT),
-    items: [item],
-  };
-  const history = () => ({
-    id: item.id,
-    receiptId: receipt.id,
-    orderItemId: item.orderItemId,
-    receivedQuantity: item.receivedQuantity,
-    resalableQuantity: item.resalableQuantity,
-    receipt: { orderId: receipt.orderId },
-  });
+  const { item, receipt, history } = createDeliveryFixtureData<string | null>(f, 0, 'KV-DELIVERY-15');
   f.mock.deliveryReturnReceipt.findUnique.mockResolvedValue({ orderId: f.order.id });
   f.mock.deliveryReturnReceipt.findUniqueOrThrow.mockResolvedValue(receipt);
   f.mock.returnReceiptItem.findMany.mockResolvedValue([]);
@@ -106,18 +50,6 @@ function deliveryFixture() {
   return { ...f, deliveryItem: item, deliveryReceipt: receipt, deliveryHistory: history };
 }
 
-async function expectError(action: Promise<unknown>, status: number, code: string, message?: string): Promise<void> {
-  try {
-    await action;
-  } catch (error) {
-    if (!(error instanceof HttpException)) throw error;
-    expect(error.getStatus()).toBe(status);
-    expect(error.getResponse()).toMatchObject({ code });
-    if (message !== undefined) expect(error.getResponse()).toMatchObject({ message });
-    return;
-  }
-  throw new Error(`Expected ${code} was not thrown`);
-}
 
 function validate(f: ReturnType<typeof customerFixture>, kind: ReturnReceiptKind = 'CUSTOMER_RETURN') {
   return f.service.validateNonResalableReturn(f.tx, kind, RECEIPT_ID);

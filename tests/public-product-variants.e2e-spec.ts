@@ -1,9 +1,7 @@
-import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
-import type { PinoLogger } from 'nestjs-pino';
-import {
-  INestApplication,
-  ValidationPipe,
-} from '@nestjs/common';
+import { createCatalogTestApp } from './helpers/catalog-e2e.helper';
+
+
+import { INestApplication } from '@nestjs/common';
 
 import {
   APP_GUARD,
@@ -22,7 +20,7 @@ import { PrismaService } from '../src/modules/prisma/prisma.service';
 import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
 import { RolesGuard } from '../src/common/guards/roles.guard';
 import { TransformResponseInterceptor } from '../src/common/interceptors/transform-response.interceptor';
-import { validationExceptionFactory } from '../src/common/errors/api-error';
+
 
 const variants = [
   {
@@ -171,21 +169,7 @@ describe('BE-02 M02 Public Product Variants HTTP E2E', () => {
       ],
     }).compile();
 
-    app = moduleRef.createNestApplication();
-
-    app.setGlobalPrefix('api/v1');
-
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-        exceptionFactory: validationExceptionFactory,
-      }),
-    );
-
-    app.useGlobalFilters(new AllExceptionsFilter({ error: jest.fn() } as unknown as PinoLogger));
-    await app.init();
+    app = await createCatalogTestApp(moduleRef);
   });
 
   afterAll(async () => {

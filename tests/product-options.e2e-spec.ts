@@ -1,16 +1,8 @@
-import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
-import type { PinoLogger } from 'nestjs-pino';
+import { createCatalogTestApp } from './helpers/catalog-e2e.helper';
 
-import {
-  CanActivate,
-  ExecutionContext,
-  HttpStatus,
-  Injectable,
-  INestApplication,
-  Module,
-  UnauthorizedException,
-  ValidationPipe,
-} from '@nestjs/common';
+
+
+import { CanActivate, ExecutionContext, HttpStatus, Injectable, INestApplication, Module, UnauthorizedException } from '@nestjs/common';
 
 import {
   APP_GUARD,
@@ -36,7 +28,7 @@ import { PrismaService } from '../src/modules/prisma/prisma.service';
 
 import { RolesGuard } from '../src/common/guards/roles.guard';
 import { TransformResponseInterceptor } from '../src/common/interceptors/transform-response.interceptor';
-import { validationExceptionFactory } from '../src/common/errors/api-error';
+
 
 // ==========================================
 // PRISMA MOCK
@@ -139,21 +131,7 @@ describe('BE-02 Product Options HTTP E2E', () => {
       imports: [ProductOptionsE2eModule],
     }).compile();
 
-    app = fixture.createNestApplication();
-
-    app.setGlobalPrefix('api/v1');
-
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-        exceptionFactory: validationExceptionFactory,
-      }),
-    );
-
-    app.useGlobalFilters(new AllExceptionsFilter({ error: jest.fn() } as unknown as PinoLogger));
-    await app.init();
+    app = await createCatalogTestApp(fixture);
   });
 
   afterAll(async () => {

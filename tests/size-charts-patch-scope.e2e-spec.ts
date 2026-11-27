@@ -1,16 +1,8 @@
+import { createCatalogTestApp, catalogAdminProviders, createSizeChartPatchTxMock } from './helpers/catalog-e2e.helper';
 
-import {
-  CanActivate,
-  ExecutionContext,
-  HttpStatus,
-  Injectable,
-  INestApplication,
-  Module,
-  UnauthorizedException,
-  ValidationPipe,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, HttpStatus, Injectable, INestApplication, Module, UnauthorizedException } from '@nestjs/common';
 
-import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+
 import { Test } from '@nestjs/testing';
 import { UserRole } from '@prisma/client';
 
@@ -19,11 +11,11 @@ import type { App } from 'supertest/types';
 
 import { AdminSizeChartsController } from '../src/modules/products/admin-size-charts.controller';
 import { SizeChartsService } from '../src/modules/products/size-charts.service';
-import { PrismaService } from '../src/modules/prisma/prisma.service';
-import { IdempotencyService } from '../src/common/services/idempotency.service';
-import { RolesGuard } from '../src/common/guards/roles.guard';
-import { TransformResponseInterceptor } from '../src/common/interceptors/transform-response.interceptor';
-import { validationExceptionFactory } from '../src/common/errors/api-error';
+
+
+
+
+
 
 // ==========================================
 // BE-02 M02 - PATCH SCOPE HTTP E2E
@@ -56,27 +48,7 @@ const updatedProductChart = {
   categories: [],
 };
 
-const tx = {
-  sizeChart: {
-    findUnique: jest.fn(),
-    updateMany: jest.fn(),
-  },
-  sizeChartRow: {
-    deleteMany: jest.fn(),
-    createMany: jest.fn(),
-  },
-  size: {
-    findMany: jest.fn(),
-  },
-  product: {
-    findUnique: jest.fn(),
-    updateMany: jest.fn(),
-  },
-  category: {
-    findUnique: jest.fn(),
-    updateMany: jest.fn(),
-  },
-};
+const tx = createSizeChartPatchTxMock();
 
 const prismaMock = {
   $transaction: jest.fn(),
@@ -105,29 +77,7 @@ class TestAuthGuard implements CanActivate {
 
 @Module({
   controllers: [AdminSizeChartsController],
-  providers: [
-    SizeChartsService,
-    {
-      provide: PrismaService,
-      useValue: prismaMock,
-    },
-    {
-      provide: IdempotencyService,
-      useValue: idempotencyMock,
-    },
-    {
-      provide: APP_GUARD,
-      useClass: TestAuthGuard,
-    },
-    {
-      provide: APP_GUARD,
-      useClass: RolesGuard,
-    },
-    {
-      provide: APP_INTERCEPTOR,
-      useClass: TransformResponseInterceptor,
-    },
-  ],
+  providers: catalogAdminProviders(SizeChartsService, prismaMock, idempotencyMock, TestAuthGuard),
 })
 class PatchScopeTestModule {}
 
@@ -147,19 +97,7 @@ describe('BE-02 M02 - PATCH Scope HTTP E2E', () => {
       imports: [PatchScopeTestModule],
     }).compile();
 
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-        exceptionFactory: validationExceptionFactory,
-      }),
-    );
-
-    await app.init();
+    app = await createCatalogTestApp(moduleRef);
   });
 
   afterAll(async () => {

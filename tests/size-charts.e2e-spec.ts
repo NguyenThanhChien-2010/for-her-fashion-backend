@@ -1,24 +1,13 @@
-import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
-import type { PinoLogger } from 'nestjs-pino';
+import { createCatalogTestApp, CatalogTestAuthGuard, catalogAdminProviders } from './helpers/catalog-e2e.helper';
 
-import {
-  CanActivate,
-  ExecutionContext,
-  HttpStatus,
-  Injectable,
-  INestApplication,
-  Module,
-  UnauthorizedException,
-  ValidationPipe,
-} from '@nestjs/common';
 
-import {
-  APP_GUARD,
-  APP_INTERCEPTOR,
-} from '@nestjs/core';
+
+import { HttpStatus, INestApplication, Module } from '@nestjs/common';
+
+
 
 import { Test } from '@nestjs/testing';
-import { UserRole } from '@prisma/client';
+
 
 import request from 'supertest';
 import type { App } from 'supertest/types';
@@ -31,25 +20,15 @@ import {
   SizeChartsService,
 } from '../src/modules/products/size-charts.service';
 
-import {
-  PrismaService,
-} from '../src/modules/prisma/prisma.service';
 
-import {
-  IdempotencyService,
-} from '../src/common/services/idempotency.service';
 
-import {
-  RolesGuard,
-} from '../src/common/guards/roles.guard';
 
-import {
-  TransformResponseInterceptor,
-} from '../src/common/interceptors/transform-response.interceptor';
 
-import {
-  validationExceptionFactory,
-} from '../src/common/errors/api-error';
+
+
+
+
+
 
 // ==========================================
 // MOCK PRISMA
@@ -91,46 +70,6 @@ const idempotencyMock = {
 // AUTH GUARD CHI DANH CHO TEST
 // ==========================================
 
-@Injectable()
-class TestAuthGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
-    const req = context.switchToHttp().getRequest<{
-      headers: {
-        authorization?: string;
-      };
-      user?: {
-        id: number;
-        role: UserRole;
-      };
-    }>();
-
-    switch (req.headers.authorization) {
-      case 'Bearer test-admin':
-        req.user = {
-          id: 1,
-          role: UserRole.ADMIN,
-        };
-        return true;
-
-      case 'Bearer test-staff':
-        req.user = {
-          id: 2,
-          role: UserRole.STAFF,
-        };
-        return true;
-
-      case 'Bearer test-customer':
-        req.user = {
-          id: 3,
-          role: UserRole.CUSTOMER,
-        };
-        return true;
-
-      default:
-        throw new UnauthorizedException();
-    }
-  }
-}
 
 // ==========================================
 // TEST MODULE
@@ -141,34 +80,7 @@ class TestAuthGuard implements CanActivate {
     AdminSizeChartsController,
   ],
 
-  providers: [
-    SizeChartsService,
-
-    {
-      provide: PrismaService,
-      useValue: prismaMock,
-    },
-
-    {
-      provide: IdempotencyService,
-      useValue: idempotencyMock,
-    },
-
-    {
-      provide: APP_GUARD,
-      useClass: TestAuthGuard,
-    },
-
-    {
-      provide: APP_GUARD,
-      useClass: RolesGuard,
-    },
-
-    {
-      provide: APP_INTERCEPTOR,
-      useClass: TransformResponseInterceptor,
-    },
-  ],
+  providers: catalogAdminProviders(SizeChartsService, prismaMock, idempotencyMock, CatalogTestAuthGuard),
 })
 class SizeChartsE2eModule {}
 
@@ -224,21 +136,7 @@ describe('BE-02 SizeCharts HTTP E2E', () => {
       imports: [SizeChartsE2eModule],
     }).compile();
 
-    app = fixture.createNestApplication();
-
-    app.setGlobalPrefix('api/v1');
-
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-        exceptionFactory: validationExceptionFactory,
-      }),
-    );
-
-    app.useGlobalFilters(new AllExceptionsFilter({ error: jest.fn() } as unknown as PinoLogger));
-    await app.init();
+    app = await createCatalogTestApp(fixture);
   });
 
   afterAll(async () => {

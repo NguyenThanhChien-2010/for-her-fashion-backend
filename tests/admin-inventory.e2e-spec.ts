@@ -1,72 +1,16 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  INestApplication,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 
-import {
-  APP_FILTER,
-  APP_GUARD,
-  APP_INTERCEPTOR,
-} from '@nestjs/core';
 
-import { Test } from '@nestjs/testing';
 
-import {
-  Prisma,
-  SyncState,
-  UserRole,
-} from '@prisma/client';
+import { Prisma, SyncState } from '@prisma/client';
 
-import { PinoLogger } from 'nestjs-pino';
 
 import request from 'supertest';
 import type { App } from 'supertest/types';
+import { createInventoryTestApp, expectNoInventoryWrites, expectSafeInventoryError, TestAuthGuard } from './helpers/inventory-e2e.helper';
 
-import { InventoryModule } from '../src/modules/inventory/inventory.module';
-import { PrismaService } from '../src/modules/prisma/prisma.service';
 
-import { RolesGuard } from '../src/common/guards/roles.guard';
-import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
-import { TransformResponseInterceptor } from '../src/common/interceptors/transform-response.interceptor';
 
-@Injectable()
-class TestAuthGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
-    const req = context.switchToHttp().getRequest<{
-      headers: {
-        authorization?: string;
-      };
-      user?: {
-        id: number;
-        role: UserRole;
-      };
-    }>();
-
-    const roles = new Map<string, UserRole>([
-      ['Bearer test-admin', UserRole.ADMIN],
-      ['Bearer test-staff', UserRole.STAFF],
-      ['Bearer test-customer', UserRole.CUSTOMER],
-    ]);
-
-    const role = roles.get(
-      req.headers.authorization ?? '',
-    );
-
-    if (!role) {
-      throw new UnauthorizedException();
-    }
-
-    req.user = {
-      id: role === UserRole.ADMIN ? 1 : 2,
-      role,
-    };
-
-    return true;
-  }
-}
 
 const confirmedAt =
   new Date('2026-11-26T07:00:00.000Z');
@@ -148,41 +92,7 @@ describe('BE-02 M03 Admin Inventory HTTP E2E', () => {
       .query(query);
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [InventoryModule],
-
-      providers: [
-        {
-          provide: PinoLogger,
-          useValue: loggerMock,
-        },
-        {
-          provide: APP_GUARD,
-          useClass: TestAuthGuard,
-        },
-        {
-          provide: APP_GUARD,
-          useClass: RolesGuard,
-        },
-        {
-          provide: APP_FILTER,
-          useClass: AllExceptionsFilter,
-        },
-        {
-          provide: APP_INTERCEPTOR,
-          useClass: TransformResponseInterceptor,
-        },
-      ],
-    })
-      .overrideProvider(PrismaService)
-      .useValue(prismaMock)
-      .compile();
-
-    app = moduleRef.createNestApplication();
-
-    app.setGlobalPrefix('api/v1');
-
-    await app.init();
+    app = await createInventoryTestApp(prismaMock, loggerMock, TestAuthGuard);
   });
 
   afterAll(async () => {
@@ -635,9 +545,7 @@ describe('BE-02 M03 Admin Inventory HTTP E2E', () => {
       tx.$executeRaw,
     ];
 
-    for (const mock of writeMocks) {
-      expect(mock).not.toHaveBeenCalled();
-    }
+    expectNoInventoryWrites(writeMocks);
   });
 
   // ==========================================
@@ -652,20 +560,6 @@ describe('BE-02 M03 Admin Inventory HTTP E2E', () => {
     const res = await getAs('test-admin')
       .expect(500);
 
-    expect(res.body).toMatchObject({
-      error: {
-        code: 'INTERNAL_SERVER_ERROR',
-        message: expect.any(String),
-        details: expect.any(Array),
-      },
-      traceId: expect.any(String),
-    });
-
-    expect(JSON.stringify(res.body)).not.toContain(
-      'Internal inventory database error',
-    );
-
-    expect(loggerMock.error)
-      .toHaveBeenCalled();
+    expectSafeInventoryError(res, 'Internal inventory database error', loggerMock);
   });
 });

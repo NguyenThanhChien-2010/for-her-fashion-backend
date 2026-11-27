@@ -1,3 +1,4 @@
+import { createVerifiedReturnFixtureData, createPriorEffectFixtureData } from '../../../tests/helpers/return-inventory-unit.helper';
 import { HttpException } from '@nestjs/common';
 import { SyncState } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
@@ -5,51 +6,12 @@ import type { Prisma } from '@prisma/client';
 import { InventoryLedgerService } from './inventory-ledger.service';
 import { PendingInventoryEffectService } from './pending-inventory-effect.service';
 import { ReturnInventoryService } from './return-inventory.service';
-import type { PreparedReturnReceipt } from './return-inventory.service';
-import type { VerifiedReturnEvidence } from './return-inventory.contract';
 
 const MAX_INT = 2147483647;
 const OBSERVED_AT = new Date('2020-01-03T00:00:00.000Z');
 
 function fixture() {
-  const receipt: PreparedReturnReceipt = {
-    receiptKind: 'CUSTOMER_RETURN',
-    receiptId: 15,
-    receiptOperationKey: 'RETURN-15',
-    orderId: 101,
-    actorId: 9,
-    sourceDocumentId: 'KV-RETURN-15',
-    receivedAt: new Date('2020-01-02T00:00:00.000Z'),
-    lines: [{
-      receiptItemId: 601, orderItemId: 201, requestItemId: 401,
-      variantId: 301, orderedQuantity: 5, receivedQuantity: 3,
-      acceptedQuantity: 3, resalableQuantity: 3,
-      operationKey: 'M03-RETURN-RECEIPT-ITEM-601-RESTOCK',
-    }],
-  };
-  const evidence: VerifiedReturnEvidence = {
-    receiptKind: 'CUSTOMER_RETURN', receiptId: 15,
-    sourceDocumentId: 'KV-RETURN-15',
-    snapshots: [{
-      variantId: 301, sourceVariantId: 'KV-SKU-301',
-      expectedInventoryVersion: 5, restockedQuantity: 3,
-      sourceQuantity: 13, sourceVersion: 'source-v2',
-      observedAt: new Date(OBSERVED_AT), confirmedEffects: [], notReflectedEffects: [],
-    }],
-  };
-  const inventory = {
-    version: 5, quantity: 10, sourceVersion: 'source-v1',
-    lastConfirmedAt: new Date('2020-01-01T00:00:00.000Z') as Date | null,
-  };
-  const mock = {
-    $queryRaw: jest.fn().mockResolvedValue([{ id: 301 }]),
-    productVariant: { findUniqueOrThrow: jest.fn().mockResolvedValue({ kiotvietVariantId: 'KV-SKU-301' }) },
-    inventory: { findUniqueOrThrow: jest.fn().mockResolvedValue(inventory), updateMany: jest.fn() },
-    returnReceipt: { findFirst: jest.fn().mockResolvedValue(null) },
-    deliveryReturnReceipt: { findFirst: jest.fn().mockResolvedValue(null) },
-    inventoryMovement: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null), create: jest.fn(), updateMany: jest.fn() },
-    pendingInventoryEffect: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null), create: jest.fn(), updateMany: jest.fn() },
-  };
+  const { receipt, evidence, inventory, mock } = createVerifiedReturnFixtureData(OBSERVED_AT, jest.fn());
   const ledger = new InventoryLedgerService();
   const pending = new PendingInventoryEffectService();
   const append = jest.spyOn(ledger, 'appendPendingMovement');
@@ -63,12 +25,7 @@ function fixture() {
 type Fixture = ReturnType<typeof fixture>;
 
 function effectFixture(f: Fixture, confirmed = false, delta = -2) {
-  const effect = {
-    operationKey: 'ORDER-201-DEDUCT', variantId: 301, delta, version: 1,
-    status: SyncState.PENDING as SyncState, releasedAt: null as Date | null,
-    sourceDocumentId: null as string | null, sourceAcknowledgedAt: null as Date | null,
-  };
-  const movement = { operationKey: effect.operationKey, variantId: 301, delta, sourceDocumentId: null as string | null };
+  const { effect, movement } = createPriorEffectFixtureData(delta);
   f.mock.pendingInventoryEffect.findMany.mockResolvedValue([effect]);
   f.mock.inventoryMovement.findMany.mockResolvedValue([movement]);
   if (confirmed) {

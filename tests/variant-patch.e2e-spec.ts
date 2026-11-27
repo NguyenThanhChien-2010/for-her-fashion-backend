@@ -1,13 +1,7 @@
-import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
-import type { PinoLogger } from 'nestjs-pino';
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  INestApplication,
-  UnauthorizedException,
-  ValidationPipe,
-} from '@nestjs/common';
+import { createCatalogTestApp } from './helpers/catalog-e2e.helper';
+
+
+import { CanActivate, ExecutionContext, Injectable, INestApplication, UnauthorizedException } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import { UserRole } from '@prisma/client';
@@ -19,7 +13,7 @@ import { VariantPatchService } from '../src/modules/products/variant-patch.servi
 import { PrismaService } from '../src/modules/prisma/prisma.service';
 import { RolesGuard } from '../src/common/guards/roles.guard';
 import { TransformResponseInterceptor } from '../src/common/interceptors/transform-response.interceptor';
-import { validationExceptionFactory } from '../src/common/errors/api-error';
+
 
 @Injectable()
 class TestAuthGuard implements CanActivate {
@@ -123,21 +117,7 @@ describe('BE-02 M02 Variant PATCH HTTP E2E', () => {
       ],
     }).compile();
 
-    app = moduleRef.createNestApplication();
-
-    app.setGlobalPrefix('api/v1');
-
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-        exceptionFactory: validationExceptionFactory,
-      }),
-    );
-
-    app.useGlobalFilters(new AllExceptionsFilter({ error: jest.fn() } as unknown as PinoLogger));
-    await app.init();
+    app = await createCatalogTestApp(moduleRef);
   });
 
   afterAll(async () => {

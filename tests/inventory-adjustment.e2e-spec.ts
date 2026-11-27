@@ -6,24 +6,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 
-import {
-  APP_FILTER,
-  APP_GUARD,
-  APP_INTERCEPTOR,
-} from '@nestjs/core';
 
-import { Test } from '@nestjs/testing';
 import { SyncState, UserRole } from '@prisma/client';
-import { PinoLogger } from 'nestjs-pino';
 
 import request from 'supertest';
 import type { App } from 'supertest/types';
+import { createInventoryTestApp, expectNoInventoryWrites } from './helpers/inventory-e2e.helper';
 
-import { InventoryModule } from '../src/modules/inventory/inventory.module';
-import { PrismaService } from '../src/modules/prisma/prisma.service';
-import { RolesGuard } from '../src/common/guards/roles.guard';
-import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
-import { TransformResponseInterceptor } from '../src/common/interceptors/transform-response.interceptor';
 
 @Injectable()
 class TestAuthGuard implements CanActivate {
@@ -151,39 +140,7 @@ describe('BE-02 M03 Inventory Adjustment HTTP E2E', () => {
       .set('Authorization', `Bearer ${token}`);
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [InventoryModule],
-      providers: [
-        {
-          provide: PinoLogger,
-          useValue: { error: jest.fn() },
-        },
-        {
-          provide: APP_GUARD,
-          useClass: TestAuthGuard,
-        },
-        {
-          provide: APP_GUARD,
-          useClass: RolesGuard,
-        },
-        {
-          provide: APP_FILTER,
-          useClass: AllExceptionsFilter,
-        },
-        {
-          provide: APP_INTERCEPTOR,
-          useClass: TransformResponseInterceptor,
-        },
-      ],
-    })
-      .overrideProvider(PrismaService)
-      .useValue(prismaMock)
-      .compile();
-
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-
-    await app.init();
+    app = await createInventoryTestApp(prismaMock, { error: jest.fn() }, TestAuthGuard);
   });
 
   afterAll(async () => {
@@ -232,9 +189,7 @@ describe('BE-02 M03 Inventory Adjustment HTTP E2E', () => {
       tx.$executeRaw,
     ];
 
-    for (const mock of forbiddenWrites) {
-      expect(mock).not.toHaveBeenCalled();
-    }
+    expectNoInventoryWrites(forbiddenWrites);
   });
 
   // 01-02. Create with ADMIN and STAFF.

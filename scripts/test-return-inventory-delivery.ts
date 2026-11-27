@@ -1,8 +1,6 @@
 import 'reflect-metadata';
 
 import { strict as assert } from 'node:assert';
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { HttpException } from '@nestjs/common';
 import { InventoryReason, Prisma, SyncState } from '@prisma/client';
 import { PrismaService } from '../src/modules/prisma/prisma.service';
@@ -11,10 +9,9 @@ import { PendingInventoryEffectService } from '../src/modules/inventory/pending-
 import { ReturnInventoryService } from '../src/modules/inventory/return-inventory.service';
 import type { PreparedReturnLine } from '../src/modules/inventory/return-inventory.service';
 import type { VerifiedReturnEvidence } from '../src/modules/inventory/return-inventory.contract';
+import { capture, options, readFixture, restoreEvidence, runTag, verifyConfirmedReturn, verifyTarget } from './helpers/return-inventory-test.helper';
+import type { JsonEvidence, State } from './helpers/return-inventory-test.helper';
 
-const database = 'for_her_fashion_m03_test';
-const manifestHash = '0274b795e885692f02cd011798939dd66a7ac9204e0e5eb59bf9431e466a6f35';
-const runTag = 'ff7ceb8f';
 const orderId = 6;
 const receiptId = 1;
 const variantId = 5;
@@ -22,15 +19,7 @@ const manifestActorId = 5;
 const actorId = null;
 const key = 'M03-DELIVERY-RETURN-ITEM-1-RESTOCK';
 const doc = 'M03R-ff7ceb8f-02-RETURN';
-const options = {
-  isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
-  maxWait: 10000,
-  timeout: 30000,
-};
 
-type JsonEvidence = Omit<VerifiedReturnEvidence, 'snapshots'> & {
-  snapshots: Array<Omit<VerifiedReturnEvidence['snapshots'][number], 'observedAt'> & { observedAt: string }>;
-};
 interface Fixture {
   caseId: string;
   kind: string;
@@ -43,19 +32,7 @@ interface Fixture {
 }
 
 function readEvidence(): VerifiedReturnEvidence {
-  const path = process.env.M03_RETURN_MANIFEST_PATH;
-  assert.ok(path, 'Missing manifest path');
-  const raw = readFileSync(path);
-  assert.equal(createHash('sha256').update(raw).digest('hex'), manifestHash, 'Manifest SHA256 mismatch');
-  const manifest = JSON.parse(raw.toString('utf8')) as {
-    runTag: string; customerId: number; actorId: number; fixtures: Fixture[];
-  };
-  assert.equal(manifest.runTag, runTag);
-  assert.equal(manifest.customerId, 4);
-  assert.equal(manifest.actorId, manifestActorId);
-  assert.equal(manifest.fixtures.length, 7);
-  const fixture = manifest.fixtures.find(item => item.caseId === 'IT-R02');
-  assert.ok(fixture);
+  const fixture = readFixture<Fixture>('IT-R02', manifestActorId, 'Manifest SHA256 mismatch');
   assert.equal(fixture.kind, 'DELIVERY_RETURN');
   assert.equal(fixture.orderId, orderId);
   assert.equal(fixture.requestId, null);
@@ -66,12 +43,7 @@ function readEvidence(): VerifiedReturnEvidence {
     orderedQuantity: 5, receivedQuantity: 5, acceptedQuantity: null,
     resalableQuantity: 3, operationKey: key,
   });
-  const evidence: VerifiedReturnEvidence = {
-    ...fixture.evidence,
-    snapshots: fixture.evidence.snapshots.map(snapshot => ({
-      ...snapshot, observedAt: new Date(snapshot.observedAt),
-    })),
-  };
+  const evidence = restoreEvidence(fixture.evidence);
   assert.equal(evidence.receiptKind, 'DELIVERY_RETURN');
   assert.equal(evidence.receiptId, receiptId);
   assert.equal(evidence.sourceDocumentId, doc);
@@ -87,32 +59,6 @@ function readEvidence(): VerifiedReturnEvidence {
   return evidence;
 }
 
-async function verifyTarget(tx: Prisma.TransactionClient) {
-  const rows = await tx.$queryRaw<Array<{ databaseName: string; serverHost: string }>>`
-    SELECT DATABASE() AS databaseName, @@hostname AS serverHost
-  `;
-  assert.equal(rows[0]?.databaseName, database);
-  assert.ok(process.env.M03_EXPECTED_HOST);
-  assert.equal(rows[0]?.serverHost, process.env.M03_EXPECTED_HOST);
-}
-
-async function capture(tx: Prisma.TransactionClient) {
-  return {
-    inventory: await tx.inventory.findMany({ orderBy: { variantId: 'asc' } }),
-    movements: await tx.inventoryMovement.findMany({ orderBy: { id: 'asc' } }),
-    effects: await tx.pendingInventoryEffect.findMany({ orderBy: { id: 'asc' } }),
-    orders: await tx.order.findMany({ orderBy: { id: 'asc' } }),
-    orderItems: await tx.orderItem.findMany({ orderBy: { id: 'asc' } }),
-    requests: await tx.returnRequest.findMany({ orderBy: { id: 'asc' } }),
-    requestItems: await tx.returnRequestItem.findMany({ orderBy: { id: 'asc' } }),
-    receipts: await tx.returnReceipt.findMany({ orderBy: { id: 'asc' } }),
-    receiptItems: await tx.returnReceiptItem.findMany({ orderBy: { id: 'asc' } }),
-    deliveryReceipts: await tx.deliveryReturnReceipt.findMany({ orderBy: { id: 'asc' } }),
-    deliveryItems: await tx.deliveryReturnItem.findMany({ orderBy: { id: 'asc' } }),
-  };
-}
-
-type State = Awaited<ReturnType<typeof capture>>;
 
 function verifyBefore(before: State) {
   assert.equal(before.inventory.length, 11);
@@ -180,49 +126,10 @@ function verifyBefore(before: State) {
 }
 
 function verifyAfter(before: State, after: State, evidence: VerifiedReturnEvidence) {
-  const snapshot = evidence.snapshots[0];
-  const stock = after.inventory.find(row => row.variantId === variantId);
-  assert.ok(stock);
-  assert.equal(stock.quantity, 13);
-  assert.equal(stock.version, 4);
-  assert.equal(stock.sourceQuantity, 13);
-  assert.equal(stock.sourceVersion, snapshot.sourceVersion);
-  assert.deepEqual(stock.lastConfirmedAt, snapshot.observedAt);
-  assert.equal(stock.syncStatus, SyncState.CONFIRMED);
-  assert.deepEqual(after.inventory.filter(row => row.variantId !== variantId), before.inventory.filter(row => row.variantId !== variantId));
-  assert.equal(after.movements.length, before.movements.length + 1);
-  assert.equal(after.effects.length, before.effects.length + 1);
-  assert.deepEqual(after.movements.filter(row => row.operationKey !== key), before.movements);
-  assert.deepEqual(after.effects.filter(row => row.operationKey !== key), before.effects);
-  const movement = after.movements.find(row => row.operationKey === key);
-  const effect = after.effects.find(row => row.operationKey === key);
-  assert.ok(movement && effect);
-  assert.equal(movement.variantId, variantId);
-  assert.equal(movement.delta, 3);
-  assert.equal(movement.inventoryVersion, 4);
-  assert.equal(movement.reason, InventoryReason.RETURN_RECEIVED);
-  assert.equal(movement.refType, 'DELIVERY_RETURN_ITEM');
-  assert.equal(movement.refId, 1);
-  assert.equal(movement.createdBy, actorId);
-  assert.equal(movement.sourceDocumentId, doc);
-  assert.equal(effect.variantId, variantId);
-  assert.equal(effect.orderId, orderId);
-  assert.equal(effect.delta, 3);
-  assert.equal(effect.version, 2);
-  assert.equal(effect.status, SyncState.CONFIRMED);
-  assert.equal(effect.sourceDocumentId, doc);
-  assert.deepEqual(effect.sourceAcknowledgedAt, snapshot.observedAt);
-  assert.ok(effect.releasedAt instanceof Date);
-  assert.ok(effect.releasedAt.getTime() >= snapshot.observedAt.getTime());
-  assert.deepEqual(after.orders, before.orders);
-  assert.deepEqual(after.orderItems, before.orderItems);
-  assert.deepEqual(after.requests, before.requests);
-  assert.deepEqual(after.requestItems, before.requestItems);
-  assert.deepEqual(after.receipts, before.receipts);
-  assert.deepEqual(after.receiptItems, before.receiptItems);
-  assert.deepEqual(after.deliveryReceipts, before.deliveryReceipts);
-  assert.deepEqual(after.deliveryItems, before.deliveryItems);
-  return { stock, movement, effect };
+  return verifyConfirmedReturn(before, after, evidence, {
+    variantId, orderId, key, doc, actorId, quantity: 13, delta: 3,
+    refType: 'DELIVERY_RETURN_ITEM', refId: 1,
+  });
 }
 
 async function main() {
