@@ -28,7 +28,7 @@ export class VariantPatchService {
 
     const id = Number(value);
 
-    if (!Number.isSafeInteger(id)) {
+    if (!Number.isSafeInteger(id) || id > 2147483647) {
       throw new BadRequestException(
         apiErrorPayload(
           ErrorCode.VALIDATION_ERROR,
@@ -62,7 +62,8 @@ export class VariantPatchService {
 
     if (
       !Number.isSafeInteger(dto.version) ||
-      dto.version < 1
+      dto.version < 1 ||
+      dto.version > 2147483647
     ) {
       throw new BadRequestException(
         apiErrorPayload(

@@ -239,8 +239,9 @@ export class CategoriesService {
 
     // Kiểm tra version.
     if (
-      !Number.isInteger(dto.version) ||
-      dto.version < 1
+      !Number.isSafeInteger(dto.version) ||
+      dto.version < 1 ||
+      dto.version > 2147483647
     ) {
       throw new BadRequestException(
         apiErrorPayload(
@@ -453,15 +454,8 @@ export class CategoriesService {
     ifMatch: string | undefined,
     requester: CategoryRequester,
   ): Promise<void> {
-    // Chỉ ADMIN được xóa.
-    if (requester.role !== UserRole.ADMIN) {
-      throw new ForbiddenException(
-        apiErrorPayload(
-          ErrorCode.FORBIDDEN,
-          'Chỉ ADMIN được phép xóa danh mục.',
-        ),
-      );
-    }
+    // ADM-07: ADMIN và STAFF được xóa danh mục không còn ràng buộc.
+    this.assertManagementRole(requester);
 
     const id = this.parseCategoryId(categoryId);
 
@@ -764,7 +758,7 @@ export class CategoriesService {
       match[1] ?? match[2],
     );
 
-    if (!Number.isSafeInteger(version)) {
+    if (!Number.isSafeInteger(version) || version > 2147483647) {
       throw new BadRequestException(
         apiErrorPayload(
           ErrorCode.VALIDATION_ERROR,

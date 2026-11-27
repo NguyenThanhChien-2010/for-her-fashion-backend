@@ -43,7 +43,10 @@ export class PublicProductVariantsService {
 
     const result = Number(value);
 
-    if (!Number.isSafeInteger(result)) {
+    if (
+      !Number.isSafeInteger(result) ||
+      ((field === 'productId' || field === 'colorId') && result > 2147483647)
+    ) {
       throw this.badRequest(
         `${field} vượt phạm vi hỗ trợ.`,
       );

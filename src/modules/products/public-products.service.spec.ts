@@ -657,4 +657,50 @@ describe('BE-02 PublicProductsService', () => {
       },
     });
   });
+
+  it.each([
+    { categoryId: '2147483648' },
+    { colorIds: ['2147483648'] },
+    { categoryId: '2147483648', sort: 'RELEVANCE' },
+    { colorIds: ['2147483648'], sort: 'RELEVANCE' },
+  ])('LIST: rejects out-of-range Int before DB (%j)', async (query) => {
+    await expect(service.findAll(query)).rejects.toMatchObject({
+      status: 400,
+      response: { code: 'VALIDATION_ERROR' },
+    });
+    expect(prisma.product.count).not.toHaveBeenCalled();
+    expect(prisma.product.findMany).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('DETAIL: rejects out-of-range Int before DB', async () => {
+    await expect(service.findOne('2147483648')).rejects.toMatchObject({
+      status: 400,
+      response: { code: 'VALIDATION_ERROR' },
+    });
+    expect(prisma.product.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('LIST: accepts signed Int upper boundary for both IDs', async () => {
+    await service.findAll({
+      categoryId: '2147483647',
+      colorIds: ['2147483647'],
+    });
+    expect(prisma.product.count).toHaveBeenCalledWith({
+      where: {
+        status: ProductStatus.ACTIVE,
+        categoryId: 2147483647,
+        variants: { some: { isActive: true, colorId: { in: [2147483647] } } },
+      },
+    });
+  });
+
+  it('DETAIL: accepts signed Int upper boundary', async () => {
+    await service.findOne('2147483647');
+    expect(prisma.product.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 2147483647 }),
+      }),
+    );
+  });
 });

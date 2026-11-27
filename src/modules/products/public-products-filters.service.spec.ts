@@ -206,4 +206,23 @@ describe('BE-02 PublicProductsFiltersService', () => {
       status: 400,
     });
   });
+
+  it('FILTERS: rejects out-of-range Int before DB', async () => {
+    await expect(service.getFilters('2147483648')).rejects.toMatchObject({
+      status: 400,
+      response: { code: 'VALIDATION_ERROR' },
+    });
+    expect(prisma.color.findMany).not.toHaveBeenCalled();
+    expect(prisma.size.findMany).not.toHaveBeenCalled();
+    expect(prisma.product.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('FILTERS: accepts signed Int upper boundary', async () => {
+    await service.getFilters('2147483647');
+    expect(prisma.product.aggregate).toHaveBeenCalledWith({
+      where: { status: ProductStatus.ACTIVE, categoryId: 2147483647 },
+      _min: { price: true },
+      _max: { price: true },
+    });
+  });
 });

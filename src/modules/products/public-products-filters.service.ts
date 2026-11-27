@@ -43,7 +43,7 @@ export class PublicProductsFiltersService {
 
     const categoryId = Number(value);
 
-    if (!Number.isSafeInteger(categoryId)) {
+    if (!Number.isSafeInteger(categoryId) || categoryId > 2147483647) {
       throw new BadRequestException(
         apiErrorPayload(
           ErrorCode.VALIDATION_ERROR,

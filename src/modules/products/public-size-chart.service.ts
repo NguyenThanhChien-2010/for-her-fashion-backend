@@ -39,7 +39,7 @@ export class PublicSizeChartService {
 
     const productId = Number(rawProductId);
 
-    if (!Number.isSafeInteger(productId)) {
+    if (!Number.isSafeInteger(productId) || productId > 2147483647) {
       throw new BadRequestException(
         apiErrorPayload(
           ErrorCode.VALIDATION_ERROR,

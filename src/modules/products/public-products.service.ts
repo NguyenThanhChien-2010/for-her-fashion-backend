@@ -61,7 +61,7 @@ export class PublicProductsService {
 
     const id = Number(value);
 
-    if (!Number.isSafeInteger(id)) {
+    if (!Number.isSafeInteger(id) || id > 2147483647) {
       throw this.badRequest(
         'ID sản phẩm vượt quá phạm vi hỗ trợ.',
       );
@@ -103,6 +103,17 @@ export class PublicProductsService {
     }
 
     return parsed;
+  }
+
+  // Prisma Int IDs use the signed 32-bit range; pagination is separate.
+  private parsePositiveId(value: unknown, field: string): number {
+    const id = this.parsePositiveInteger(value, field);
+    if (id > 2147483647) {
+      throw this.badRequest(
+        `${field} vượt quá phạm vi hỗ trợ.`,
+      );
+    }
+    return id;
   }
 
   private parsePrice(
@@ -204,7 +215,7 @@ export class PublicProductsService {
     }
 
     return values.map((item) =>
-      this.parsePositiveInteger(
+      this.parsePositiveId(
         item,
         'colorIds',
       ),
@@ -564,7 +575,7 @@ export class PublicProductsService {
     let categoryId: number | undefined;
 
     if (query.categoryId !== undefined) {
-      categoryId = this.parsePositiveInteger(
+      categoryId = this.parsePositiveId(
         query.categoryId,
         'categoryId',
       );

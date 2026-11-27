@@ -1,3 +1,5 @@
+import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
+import type { PinoLogger } from 'nestjs-pino';
 import {
   CanActivate,
   ExecutionContext,
@@ -134,6 +136,7 @@ describe('BE-02 M02 Variant PATCH HTTP E2E', () => {
       }),
     );
 
+    app.useGlobalFilters(new AllExceptionsFilter({ error: jest.fn() } as unknown as PinoLogger));
     await app.init();
   });
 

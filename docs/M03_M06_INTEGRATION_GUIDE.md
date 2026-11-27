@@ -1,5 +1,7 @@
 # Hướng dẫn tích hợp M03 – M06
 
+> **Bản cập nhật Bước 15.6-B (27/11/2026):** Mục 19 là kết quả hiện hành; Mục 1–18 là bằng chứng lịch sử. Hoàn tồn local-only đã đạt MySQL Integration 8/8, nhưng chưa nghiệm thu liên module thực tế.
+
 > Cập nhật Bước 13.8 (27/11/2026): Mục 1–16 lưu nguyên nội dung Bước 12; hợp đồng hàng hoàn và thông tin hiện hành ở Mục 17–18 được ưu tiên khi có khác biệt, đặc biệt export module và số lượng test.
 
 ## 1. Thông tin tài liệu
@@ -413,3 +415,33 @@ Nếu mọi dòng resalable = 0, gọi `validateNonResalableReturn` với phiế
 ## 18. Kết quả bàn giao hiện hành
 
 Final Regression Bước 13.7-A.1: Prisma validate, TypeScript, ESLint PASS; 17 suite/511 unit test đạt, không failed/pending/todo; 10 integration script check-only đạt; 7 kịch bản hàng hoàn và 2 kịch bản đơn hàng MySQL đã nghiệm thu nội bộ, audit độc lập đọc lại đạt. 280 test ở Mục 13 là mốc lịch sử, đã nằm trong 511. Xem [báo cáo nghiệm thu](M03_TEST_ACCEPTANCE_REPORT.md) phần cập nhật Bước 13 để biết kết quả và giới hạn. Chờ leader và các module liên quan duyệt hợp đồng trước khi tích hợp/merge.
+## 19. Cập nhật Bước 15 — kết quả kiểm thử hoàn tồn và điều kiện tích hợp (27/11/2026)
+
+Mục 1–18 được giữ làm lịch sử; phần này thay thế các nhận định trước đây rằng `releaseForOrder()` chưa được kiểm thử trên MySQL thật. HEAD tại thời điểm kiểm tra: `1c02e7a145b518f20f3d7eb6c83e67b7f468c0ef`, cùng các bản sửa M02 chưa commit. Hợp đồng service tại các mục 4, 8–10, 17 không thay đổi.
+
+### 19.1. Trạng thái hiện hành
+
+- 15.6-A: 31 suite, 768/768 unit test (M02 257, M03 511), Prisma validate, TypeScript và ESLint BE-02 PASS.
+- 15.3: 16 suite, 292/292 HTTP E2E với Prisma giả lập, 28/28 API có mẫu success đúng schema, 0 response finding.
+- 15.1-D.2: 136/136 kiểm tra phân quyền, guard thật và JWT strategy test; không chứng nhận xác thực phiên thật BE-01.
+- 15.4-C: 8/8 kịch bản release/audit trên MySQL test 3308 với bằng chứng nguồn giả lập. Hủy COD, hết hạn MOMO, replay cùng/khác reason, hai transaction đồng thời, rollback hai SKU, từ chối khi có dấu vết nguồn, từ chối trạng thái đơn sai và audit dữ liệu đã commit đều PASS. R10 tại mục 14 được xử lý trong phạm vi này.
+- Bước 12 và 13: 2 kịch bản đơn hàng và 7 kịch bản hàng hoàn MySQL thật đã đạt; không chạy lại các transaction ghi dữ liệu.
+
+### 19.2. Ràng buộc phía caller
+
+M04 (giỏ hàng/Mua ngay) chỉ gọi `assertAvailable()`; không giữ hoặc trừ tồn. M06 phải điều phối Order/OrderItem, `deductForOrder()` và các nghiệp vụ liên quan trong cùng transaction. Khi hủy/timeout, M06/M07 phải xác minh điều kiện thanh toán, chuyển trạng thái phù hợp trong cùng transaction và phối hợp M08 ngăn dispatch đồng thời trước khi gọi `releaseForOrder()`. Chỉ dùng `VERIFIED_LOCAL_ONLY` khi có căn cứ tin cậy, không nhận giá trị này từ client. Không catch lỗi rồi commit một phần. Retry có giới hạn cho toàn transaction theo hợp đồng idempotency của caller.
+
+Các reason `ORDER_CANCELLED` và `PAYMENT_EXPIRED` dùng chung key `M03-ORDER-{orderId}-SKU-{variantId}-RELEASE`. Replay có kiểm tra chứng từ gốc, không phải cấp phép bỏ qua điều kiện trạng thái/ thanh toán. Hai effect trừ và hoàn có tổng delta 0 vẫn có thể PENDING; không tự xác nhận nguồn hoặc đánh dấu released chỉ dựa trên tổng delta. Đơn có dấu vết đồng bộ bị từ chối hoàn local mới; cần đối soát nguồn M08. M11 cung cấp kết quả kiểm nhận và số lượng bán lại, M08 xác minh chứng từ. Không gọi KiotViet/MoMo thật từ script kiểm thử.
+
+### 19.3. Checklist tích hợp cần xác nhận cùng nhóm
+
+| Module | Điều kiện chưa nghiệm thu đầu cuối |
+|---|---|
+| M04 | Cart và Buy Now thực tế không ghi Inventory/Movement/Effect |
+| M06 | Hai checkout tranh SKU cuối; idempotency cấp Order; rollback cùng nghiệp vụ ưu đãi/outbox; hủy đơn theo trạng thái đã xác minh |
+| M07 | Timeout, thu muộn, chuyển COD, hoàn tiền, đối soát thanh toán thật |
+| M08 | Xác minh local-only, chống dispatch đồng thời, guard chứng từ xuyên Order/SKU, xử lý replay/timeout và pending effects theo nguồn |
+| M11 | Kiểm nhận bán lại thật, số lượng lũy kế và xử lý event idempotent liên module |
+| BE-01/leader | Thống nhất HTTP 503 generic so với ví dụ DEPENDENCY_UNAVAILABLE; kiểm thử auth thật |
+
+Xem [báo cáo nghiệm thu](M03_TEST_ACCEPTANCE_REPORT.md), mục 19, để biết số liệu và hash báo cáo. Các gói audit Bước 15 chạy từ TEMP, không phải script đã commit. Kết quả nội bộ không thay thế nghiệm thu liên module, phê duyệt PR hoặc production. Không chạy lại fixture MySQL 15.4-B/C trên dữ liệu đã commit.

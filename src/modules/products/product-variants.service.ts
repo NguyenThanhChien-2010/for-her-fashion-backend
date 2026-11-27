@@ -94,7 +94,7 @@ export class ProductVariantsService {
 
     const id = Number(value);
 
-    if (!Number.isSafeInteger(id)) {
+    if (!Number.isSafeInteger(id) || id > 2147483647) {
       throw this.badRequest(
         'ID vượt phạm vi hỗ trợ.',
       );

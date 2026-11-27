@@ -103,7 +103,10 @@ export class SizeChartsService {
 
     const result = Number(value);
 
-    if (!Number.isSafeInteger(result)) {
+    if (
+      !Number.isSafeInteger(result) ||
+      ((field === 'chartId' || field === 'scopeId') && result > 2147483647)
+    ) {
       throw this.badRequest(
         `${field} vượt phạm vi hỗ trợ.`,
       );
@@ -590,7 +593,8 @@ export class SizeChartsService {
 
     if (
       !Number.isSafeInteger(dto.version) ||
-      dto.version < 1
+      dto.version < 1 ||
+      dto.version > 2147483647
     ) {
       throw this.badRequest(
         'version phải là số nguyên dương.',

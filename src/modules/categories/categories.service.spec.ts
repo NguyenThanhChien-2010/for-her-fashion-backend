@@ -474,19 +474,45 @@ describe('CategoriesService', () => {
       });
     });
 
-    it('Staff không được xóa danh mục', async () => {
+    it('Customer không được xóa danh mục', async () => {
       const d = deps();
 
       await expect(
         d.service.remove(
           '2',
           '"2"',
-          staff,
+          customer,
         ),
       ).rejects.toBeInstanceOf(ForbiddenException);
 
       expect(d.prisma.$transaction).not.toHaveBeenCalled();
     });
+
+    it('Staff xóa danh mục không còn ràng buộc và ghi audit', async () => {
+      const d = deps();
+      d.tx.category.findUnique.mockResolvedValue(categoryRow());
+      await d.service.remove('2', '"2"', staff);
+      expect(d.tx.category.deleteMany).toHaveBeenCalledWith({
+        where: { id: 2, version: 2 },
+      });
+      expect(d.tx.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ actorId: 2, action: 'CATEGORY_DELETE', entityId: '2' }),
+      });
+    });
+
+    it.each(['children', 'products', 'stale'])(
+      'Staff cannot delete category with %s',
+      async (reason) => {
+        const d = deps();
+        d.tx.category.findUnique.mockResolvedValue(categoryRow());
+        if (reason === 'children') d.tx.category.count.mockResolvedValue(1);
+        if (reason === 'products') d.tx.product.count.mockResolvedValue(1);
+        await expect(d.service.remove('2', reason === 'stale' ? '"1"' : '"2"', staff))
+          .rejects.toBeInstanceOf(ConflictException);
+        expect(d.tx.category.deleteMany).not.toHaveBeenCalled();
+        expect(d.tx.auditLog.create).not.toHaveBeenCalled();
+      },
+    );
 
     it('từ chối xóa khi còn danh mục con', async () => {
       const d = deps();

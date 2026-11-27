@@ -1,3 +1,5 @@
+import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
+import type { PinoLogger } from 'nestjs-pino';
 
 import {
   CanActivate,
@@ -514,6 +516,7 @@ describe('BE-02 Categories HTTP E2E', () => {
       }),
     );
 
+    app.useGlobalFilters(new AllExceptionsFilter({ error: jest.fn() } as unknown as PinoLogger));
     await app.init();
   });
 
@@ -913,11 +916,11 @@ describe('BE-02 Categories HTTP E2E', () => {
   );
 
   // ========================================
-  // TEST 12 - STAFF DELETE FORBIDDEN
+  // TEST 12 - CUSTOMER DELETE FORBIDDEN
   // ========================================
 
   it(
-    'STAFF không được DELETE danh mục',
+    'CUSTOMER không được DELETE danh mục',
     async () => {
       await request(app.getHttpServer())
         .delete(
@@ -925,7 +928,7 @@ describe('BE-02 Categories HTTP E2E', () => {
         )
         .set(
           'Authorization',
-          staffToken,
+          customerToken,
         )
         .set(
           'If-Match',
@@ -977,6 +980,48 @@ describe('BE-02 Categories HTTP E2E', () => {
   // ========================================
   // TEST 14 - ADMIN DELETE SUCCESS
   // ========================================
+
+  it('STAFF DELETE unlinked category returns 204 and records actor', async () => {
+    const result = await request(app.getHttpServer())
+      .delete('/api/v1/admin/categories/4')
+      .set('Authorization', staffToken)
+      .set('If-Match', '"1"')
+      .expect(HttpStatus.NO_CONTENT);
+    expect(result.text).toBe('');
+    expect(rows.has(4)).toBe(false);
+    expect(db.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ actorId: 2, action: 'CATEGORY_DELETE', entityId: '4' }),
+    });
+  });
+
+  it.each(['children', 'products', 'stale'])(
+    'STAFF DELETE with %s returns 409 without mutation',
+    async (reason) => {
+      const id = reason === 'children' ? 2 : 4;
+      if (reason === 'products') db.product.count.mockResolvedValue(1);
+      const version = reason === 'children' || reason === 'stale' ? '"2"' : '"1"';
+      const response = await request(app.getHttpServer())
+        .delete('/api/v1/admin/categories/' + id)
+        .set('Authorization', staffToken)
+        .set('If-Match', version)
+        .expect(HttpStatus.CONFLICT);
+      expect(response.body.error.code).toBe('CONFLICT');
+      expect(rows.has(id)).toBe(true);
+      expect(db.category.deleteMany).not.toHaveBeenCalled();
+      expect(db.auditLog.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it('Anonymous DELETE category returns 401 without mutation', async () => {
+    const response = await request(app.getHttpServer())
+      .delete('/api/v1/admin/categories/4')
+      .set('If-Match', '"1"')
+      .expect(HttpStatus.UNAUTHORIZED);
+    expect(response.body.error.code).toBe('UNAUTHORIZED');
+    expect(rows.has(4)).toBe(true);
+    expect(db.category.deleteMany).not.toHaveBeenCalled();
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
 
   it(
     'ADMIN DELETE trả HTTP 204',

@@ -93,7 +93,7 @@ export class ProductsService {
 
     const id = Number(value);
 
-    if (!Number.isSafeInteger(id)) {
+    if (!Number.isSafeInteger(id) || id > 2147483647) {
       throw this.badRequest('ID vượt quá phạm vi hỗ trợ.');
     }
 
@@ -400,7 +400,11 @@ export class ProductsService {
   ): Promise<ProductResponse> {
     this.assertPatchPermission(dto, requester);
 
-    if (!Number.isInteger(dto.version) || dto.version < 1) {
+    if (
+      !Number.isSafeInteger(dto.version) ||
+      dto.version < 1 ||
+      dto.version > 2147483647
+    ) {
       throw this.badRequest('Version không hợp lệ.');
     }
 

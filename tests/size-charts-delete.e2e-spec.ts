@@ -1,3 +1,5 @@
+import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
+import type { PinoLogger } from 'nestjs-pino';
 import {
   CanActivate,
   ExecutionContext,
@@ -119,6 +121,7 @@ describe('BE-02 SizeCharts DELETE HTTP E2E', () => {
         exceptionFactory: validationExceptionFactory,
       }),
     );
+    app.useGlobalFilters(new AllExceptionsFilter({ error: jest.fn() } as unknown as PinoLogger));
     await app.init();
   });
 
@@ -228,7 +231,7 @@ describe('BE-02 SizeCharts DELETE HTTP E2E', () => {
   it('9b. Khong tim thay chart khi khoa: HTTP 404, khong doc tiep', async () => {
     tx.$queryRaw.mockResolvedValue([]);
     const response = await deleteAs('test-admin').expect(HttpStatus.NOT_FOUND);
-    expect(response.body.code).toBe('NOT_FOUND');
+    expect(response.body.error.code).toBe('NOT_FOUND');
     expect(tx.sizeChart.findUnique).not.toHaveBeenCalled();
     expect(tx.sizeChart.deleteMany).not.toHaveBeenCalled();
   });
@@ -244,7 +247,7 @@ describe('BE-02 SizeCharts DELETE HTTP E2E', () => {
     const response = await deleteAs('test-admin', '"3"').expect(
       HttpStatus.CONFLICT,
     );
-    expect(response.body.code).toBe('VERSION_CONFLICT');
+    expect(response.body.error.code).toBe('VERSION_CONFLICT');
     expect(tx.sizeChart.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -256,7 +259,7 @@ describe('BE-02 SizeCharts DELETE HTTP E2E', () => {
     const response = await deleteAs('test-admin').expect(
       HttpStatus.CONFLICT,
     );
-    expect(response.body.code).toBe('CONFLICT');
+    expect(response.body.error.code).toBe('CONFLICT');
     expect(tx.sizeChart.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -268,7 +271,7 @@ describe('BE-02 SizeCharts DELETE HTTP E2E', () => {
     const response = await deleteAs('test-admin').expect(
       HttpStatus.CONFLICT,
     );
-    expect(response.body.code).toBe('CONFLICT');
+    expect(response.body.error.code).toBe('CONFLICT');
     expect(tx.sizeChart.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -277,7 +280,7 @@ describe('BE-02 SizeCharts DELETE HTTP E2E', () => {
     const response = await deleteAs('test-admin').expect(
       HttpStatus.CONFLICT,
     );
-    expect(response.body.code).toBe('VERSION_CONFLICT');
+    expect(response.body.error.code).toBe('VERSION_CONFLICT');
   });
 
   it('14. Prisma P2003 (foreign key): HTTP 409', async () => {
@@ -290,7 +293,7 @@ describe('BE-02 SizeCharts DELETE HTTP E2E', () => {
     const response = await deleteAs('test-admin').expect(
       HttpStatus.CONFLICT,
     );
-    expect(response.body.code).toBe('CONFLICT');
+    expect(response.body.error.code).toBe('CONFLICT');
   });
 
   it('15. Prisma P2034 (concurrent transaction): HTTP 409', async () => {
@@ -303,7 +306,7 @@ describe('BE-02 SizeCharts DELETE HTTP E2E', () => {
     const response = await deleteAs('test-admin').expect(
       HttpStatus.CONFLICT,
     );
-    expect(response.body.code).toBe('CONFLICT');
+    expect(response.body.error.code).toBe('CONFLICT');
   });
 
   it('16. Loi DB khac duoc propagate: HTTP 500', async () => {

@@ -114,7 +114,7 @@ export class AdminCategoriesController {
 
   // DELETE /api/v1/admin/categories/:categoryId
   @Delete(':categoryId')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.STAFF)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Xóa danh mục',
